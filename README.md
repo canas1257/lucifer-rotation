@@ -12,8 +12,12 @@ Koleksi skrip otomatisasi rotasi farm untuk Nuron's Lucifer Growtopia v2.86.
 ## Alur Kerja Rotasi
 
 ```text
-Mulai → Masuk World → Scan Tree → Harvest & Collect (batch) → Break di Home → Balik & Plant → Cek Gems → Simpan Seed ke Storage → Next World
+Mulai → Masuk World → Scan Tree → Harvest & Collect (batch) → Break di Home → Balik & Plant → Cek Gems & Auto Buy Pack → Simpan Seed & Drop Item Pack di Storage → Next World
 ```
+
+## Fitur Utama Baru
+- **Live Webhook Monitor (`webhook_edit`)**: Mengirim dan mengedit satu pesan Discord secara realtime (`webhook:edit()`) menampilkan nama bot, status online/offline, world aktif, gems, slot inventory, ping, dan jumlah item pack di tas.
+- **Auto Buy Pack & Storage Drop**: Otomatis membeli pack dari Store ketika gems mencukupi (`PricePack`), lalu menjatuhkan item pack (`ItemIDOfPack`) pada koordinat placement (`DropPlacement`) di world storage.
 
 ## Cara Penggunaan
 
@@ -21,8 +25,10 @@ Mulai → Masuk World → Scan Tree → Harvest & Collect (batch) → Break di H
 2. Sesuaikan konfigurasi di tabel `CONFIG`:
    - `FARMS`: Daftar world target panen dan tanam.
    - `HOME`: World pemecahan blok.
-   - `STORAGE`: World penyimpanan seed.
+   - `STORAGE`: World penyimpanan seed dan item pack.
    - `BLOCK_ID` & `SEED_ID`: ID blok dan seed tanaman.
+   - `WEBHOOK`: URL webhook Discord dan Message ID (opsional untuk live edit).
+   - `AUTO_BUY_PACK`: Pengaturan pack name, harga, delay, dan drop placement.
 3. Jalankan `loader.lua`. Bot akan mengunduh engine terbaru dan langsung mengeksekusi rotasi.
 
 ## Proteksi & Safety v2.86

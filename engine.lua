@@ -1,6 +1,6 @@
 -- engine.lua
--- Core Rotation State Machine for Lucifer v2.86
--- https://github.com/canas1257/lucifer-rotation
+-- Core Rotation State Machine with Webhook Live Monitor & Auto Buy Pack
+-- Target: Lucifer v2.86 | https://github.com/canas1257/lucifer-rotation
 -- Dipanggil otomatis oleh loader.lua
 
 local CONFIG = ... or _G.CONFIG
@@ -29,9 +29,68 @@ local STATE = {
     HARVEST = 1,
     BREAK_HOME = 2,
     PLANT = 3,
-    STORE = 4,
-    NEXT_WORLD = 5,
+    BUY_PACK = 4,
+    STORE = 5,
+    NEXT_WORLD = 6,
 }
+
+-- ========================================================
+-- WEBHOOK MONITORING (LIVE DASHBOARD)
+-- ========================================================
+local webhookClient = nil
+if CONFIG.WEBHOOK and CONFIG.WEBHOOK.ENABLED and CONFIG.WEBHOOK.URL and CONFIG.WEBHOOK.URL ~= "" then
+    webhookClient = Webhook.new(CONFIG.WEBHOOK.URL)
+    if CONFIG.WEBHOOK.MESSAGE_ID and CONFIG.WEBHOOK.MESSAGE_ID ~= "" then
+        webhookClient.message_id = tostring(CONFIG.WEBHOOK.MESSAGE_ID)
+    end
+end
+
+local function updateWebhook(activity, currentFarm)
+    if not webhookClient then return end
+
+    local worldName = bot:isInWorld() and bot:getWorld().name or "In Transit"
+    local inv = bot:getInventory()
+    local emptySlots = inv and inv.emptyslots or 0
+    local totalSlots = inv and inv.slotcount or 0
+    local ping = bot.getPing and bot:getPing() or 0
+    local uptime = bot.getActiveTime and bot:getActiveTime() or "-"
+    local isOnline = (bot.status == BotStatus.online)
+
+    webhookClient.embed1.use = true
+    webhookClient.embed1.title = "🤖 Bot Status Monitor — " .. (bot.name or "Lucifer Bot")
+    webhookClient.embed1.color = isOnline and 3066993 or 15158332
+    webhookClient.embed1.description = "Live monitor status aktivitas bot & auto buy pack"
+
+    webhookClient.embed1:addField("Status Bot", isOnline and "🟢 Online" or "🔴 Offline (" .. tostring(bot.status) .. ")", true)
+    webhookClient.embed1:addField("World Sekarang", "🗺️ `" .. worldName .. "`", true)
+    webhookClient.embed1:addField("Target Farm", "🌾 `" .. tostring(currentFarm or "-") .. "`", true)
+
+    webhookClient.embed1:addField("Aktivitas", "⚙️ " .. tostring(activity or "Idle"), false)
+
+    webhookClient.embed1:addField("Gems", "💎 " .. tostring(bot.gem_count or 0), true)
+    webhookClient.embed1:addField("Tas (Slot)", "🎒 " .. tostring(emptySlots) .. " / " .. tostring(totalSlots) .. " kosong", true)
+    webhookClient.embed1:addField("Ping", "📶 " .. tostring(ping) .. " ms", true)
+    webhookClient.embed1:addField("Waktu Aktif", "⏱️ " .. tostring(uptime), true)
+
+    if CONFIG.AUTO_BUY_PACK and CONFIG.AUTO_BUY_PACK.ENABLED and CONFIG.AUTO_BUY_PACK.ItemIDOfPack then
+        local packItemsInfo = {}
+        for _, id in ipairs(CONFIG.AUTO_BUY_PACK.ItemIDOfPack) do
+            local cnt = inv and inv:findItem(id) or 0
+            local info = getInfo(id)
+            local name = info and info.name or ("ID " .. tostring(id))
+            table.insert(packItemsInfo, string.format("%s: %d", name, cnt))
+        end
+        if #packItemsInfo > 0 then
+            webhookClient.embed1:addField("Item Pack (di Tas)", "📦 " .. table.concat(packItemsInfo, ", "), false)
+        end
+    end
+
+    if webhookClient.message_id and webhookClient.message_id ~= "" then
+        webhookClient:edit()
+    else
+        webhookClient:send()
+    end
+end
 
 -- ========================================================
 -- HELPER FUNCTIONS & PROTEKSI
@@ -96,6 +155,9 @@ end
 -- STATE HANDLERS
 -- ========================================================
 local function doHarvest(dest)
+    local farmName = type(dest) == "table" and dest.world or dest
+    updateWebhook("Memanen Pohon (Harvest)", farmName)
+
     if not warp(dest) then return STATE.NEXT_WORLD end
 
     local world = bot:getWorld()
@@ -121,9 +183,12 @@ local function doHarvest(dest)
     return harvested > 0 and STATE.BREAK_HOME or STATE.NEXT_WORLD
 end
 
-local function doBreakHome()
+local function doBreakHome(dest)
+    local farmName = type(dest) == "table" and dest.world or dest
     local blocks = bot:getInventory():findItem(CONFIG.BLOCK_ID)
     if blocks == 0 then return STATE.PLANT end
+
+    updateWebhook("Memecahkan Blok di Home", farmName)
     if not warp(CONFIG.HOME) then return STATE.BREAK_HOME end
 
     local bx, by = bot.x + 1, bot.y
@@ -162,8 +227,11 @@ local function doBreakHome()
 end
 
 local function doPlant(dest)
+    local farmName = type(dest) == "table" and dest.world or dest
     local seeds = bot:getInventory():findItem(CONFIG.SEED_ID)
-    if seeds == 0 then return STATE.STORE end
+    if seeds == 0 then return STATE.BUY_PACK end
+
+    updateWebhook("Menanam Kembali Seed (Plant)", farmName)
     if not warp(dest) then return STATE.PLANT end
 
     local world = bot:getWorld()
@@ -180,19 +248,89 @@ local function doPlant(dest)
     end
 
     print("[Info] Gems saat ini: " .. bot.gem_count)
+    return STATE.BUY_PACK
+end
+
+local function doBuyPack(dest)
+    local farmName = type(dest) == "table" and dest.world or dest
+    local packCfg = CONFIG.AUTO_BUY_PACK
+
+    if packCfg and packCfg.ENABLED and packCfg.PricePack and packCfg.PackName then
+        local price = packCfg.PricePack
+        if bot.gem_count >= price then
+            updateWebhook("Membeli Pack di Store: " .. packCfg.PackName, farmName)
+            print(string.format("[AutoBuy] Memulai beli pack '%s' (Gems: %d | Harga: %d)", packCfg.PackName, bot.gem_count, price))
+
+            local delayBuy = packCfg.DelayBuyPack or 1500
+            while waitOnline() and bot.gem_count >= price do
+                bot:buy(packCfg.PackName)
+                sleep(delayBuy)
+            end
+            print("[AutoBuy] Selesai beli pack. Sisa gems: " .. bot.gem_count)
+        end
+    end
+
     return STATE.STORE
 end
 
-local function doStore()
+local function doStore(dest)
+    local farmName = type(dest) == "table" and dest.world or dest
     local minSeed = CONFIG.STORE_SEED_MIN or 100
     local seeds = bot:getInventory():findItem(CONFIG.SEED_ID)
 
-    if seeds >= minSeed then
-        if warp(CONFIG.STORAGE) then
-            bot:fastDrop(CONFIG.SEED_ID, seeds)
-            sleep(1000)
+    local packCfg = CONFIG.AUTO_BUY_PACK
+    local hasPackItems = false
+    if packCfg and packCfg.ENABLED and packCfg.ItemIDOfPack then
+        local inv = bot:getInventory()
+        for _, id in ipairs(packCfg.ItemIDOfPack) do
+            if inv and inv:findItem(id) > 0 then
+                hasPackItems = true
+                break
+            end
         end
     end
+
+    if seeds >= minSeed or hasPackItems then
+        updateWebhook("Menyimpan Seed & Drop Item Pack ke Storage", farmName)
+        if warp(CONFIG.STORAGE) then
+            -- 1. Drop Seed
+            if seeds >= minSeed then
+                print(string.format("[Storage] Menyimpan %d seed ke storage...", seeds))
+                bot:fastDrop(CONFIG.SEED_ID, seeds)
+                sleep(1000)
+            end
+
+            -- 2. Drop Item Hasil Beli Pack
+            if hasPackItems and packCfg then
+                if packCfg.DropPlacement then
+                    local dx, dy
+                    if type(packCfg.DropPlacement) == "table" then
+                        dx, dy = packCfg.DropPlacement.x, packCfg.DropPlacement.y
+                    elseif type(packCfg.DropPlacement) == "number" and packCfg.DropPlacement > 100 then
+                        dx = packCfg.DropPlacement % 100
+                        dy = math.floor(packCfg.DropPlacement / 100)
+                    end
+
+                    if dx and dy and bot:getWorld():isValidTile(dx, dy) then
+                        print(string.format("[Storage] Menuju lokasi DropPlacement (%d, %d)...", dx, dy))
+                        bot:findPath(dx, dy)
+                        sleep(packCfg.DelayDrop or 2000)
+                    end
+                end
+
+                local delayFPDrop = packCfg.DelayFPDrop or 1000
+                for _, itemId in ipairs(packCfg.ItemIDOfPack) do
+                    local count = bot:getInventory():findItem(itemId)
+                    if count > 0 then
+                        print(string.format("[Storage] Menjatuhkan %d unit item [ID %d]...", count, itemId))
+                        bot:fastDrop(itemId, count)
+                        sleep(delayFPDrop)
+                    end
+                end
+            end
+        end
+    end
+
     return STATE.HARVEST
 end
 
@@ -200,6 +338,7 @@ end
 -- ENGINE EXECUTION
 -- ========================================================
 print("[Engine] Memulai eksekusi rotasi Lucifer v2.86...")
+updateWebhook("Engine Dimulai", "-")
 
 for _, currentFarm in ipairs(CONFIG.FARMS) do
     local farmName = type(currentFarm) == "table" and currentFarm.world or currentFarm
@@ -210,15 +349,18 @@ for _, currentFarm in ipairs(CONFIG.FARMS) do
         if currentState == STATE.HARVEST then
             currentState = doHarvest(currentFarm)
         elseif currentState == STATE.BREAK_HOME then
-            currentState = doBreakHome()
+            currentState = doBreakHome(currentFarm)
         elseif currentState == STATE.PLANT then
             currentState = doPlant(currentFarm)
+        elseif currentState == STATE.BUY_PACK then
+            currentState = doBuyPack(currentFarm)
         elseif currentState == STATE.STORE then
-            currentState = doStore()
+            currentState = doStore(currentFarm)
         elseif currentState == STATE.NEXT_WORLD then
             break
         end
     end
 end
 
+updateWebhook("Seluruh Farm Rotasi Selesai", "-")
 print("[Engine] Seluruh farm dalam rotasi selesai diproses.")

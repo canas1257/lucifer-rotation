@@ -4,7 +4,7 @@
 -- https://github.com/canas1257/lucifer-rotation
 
 -- ========================================================
--- 1. KONFIGURASI ROTASI (Edit sesuai kebutuhan di sini)
+-- 1. KONFIGURASI ROTASI & FITUR (Sesuaikan di sini)
 -- ========================================================
 local CONFIG = {
     -- Daftar world farm yang akan dipanen & ditanam
@@ -17,7 +17,7 @@ local CONFIG = {
     -- World untuk memecahkan blok hasil panen
     HOME = { world = "MYHOME", door = "" },
 
-    -- World storage untuk menyimpan seed
+    -- World storage untuk menyimpan seed & hasil item pack
     STORAGE = { world = "MYSTORE", door = "" },
 
     -- ID Item Target
@@ -34,6 +34,29 @@ local CONFIG = {
         hit = 0.18,
         place = 0.16,
         move = 0.20,
+    },
+
+    -- ====================================================
+    -- Setting For Webhook Live Monitor (webhook_edit)
+    -- ====================================================
+    WEBHOOK = {
+        ENABLED = true,
+        URL = "MASUKKAN_URL_WEBHOOK_DISCORD_ANDA",
+        MESSAGE_ID = "", -- Jika diisi, bot akan edit pesan ini terus-menerus (Live Dashboard)
+    },
+
+    -- ====================================================
+    -- Setting For Auto Buy Pack & Drop Storage
+    -- ====================================================
+    AUTO_BUY_PACK = {
+        ENABLED = true,
+        PackName = "world_lock_10_pack", -- Pack Name di Store
+        PricePack = 20000,               -- Harga Pack dalam Gems
+        ItemIDOfPack = { 242 },          -- ItemID hasil dari pack (242 = World Lock)
+        DelayBuyPack = 1500,             -- Delay pembelian antar-pack (ms)
+        DropPlacement = 1422,            -- Koordinat tile / index drop di storage (1422 -> x:22, y:14)
+        DelayDrop = 2000,                -- Delay navigasi sebelum drop (ms)
+        DelayFPDrop = 1000,              -- Delay fast drop item (ms)
     }
 }
 
