@@ -28,9 +28,9 @@ bot:setInterval(Action.move, intervals.move or 0.20)
 local STATE = {
     HARVEST = 1,
     BREAK_HOME = 2,
-    PLANT = 3,
-    BUY_PACK = 4,
-    STORE = 5,
+    BUY_PACK = 3,
+    STORE = 4,
+    PLANT = 5,
     NEXT_WORLD = 6,
 }
 
@@ -196,7 +196,6 @@ local function smartDrop(itemId, count, startX, startY, delayDrop)
                 break
             end
         else
-            -- Drop gagal atau tile sudah penuh (mencapai batas 20 floating objects / 4000 item)
             print(string.format("[Storage] Tile (%d, %d) penuh/gagal drop! Geser 1 tile ke kanan...", curX, curY))
             curX = curX + 1
             if curX > maxWorldX then
@@ -243,7 +242,8 @@ local function doHarvest(dest)
         end
     end
 
-    return harvested > 0 and STATE.BREAK_HOME or STATE.NEXT_WORLD
+    -- Selesai scan seluruh world farm
+    return (harvested > 0 or bot:getInventory():findItem(CONFIG.BLOCK_ID) > 0) and STATE.BREAK_HOME or STATE.NEXT_WORLD
 end
 
 -- Mencari spot kosong untuk berdiri dan memecahkan blok di Home World
@@ -298,24 +298,39 @@ local function doBreakHome(dest)
     sleep(400)
 
     local maxHits = CONFIG.PUNCH_RETRY_MAX or 15
+    local placeDelay = (intervals.place or 0.16) * 1000
+    local hitDelay = (intervals.hit or 0.18) * 1000
 
-    -- Pecahkan sampai habis seluruh blok di tas
-    while waitOnline() and bot:getInventory():findItem(CONFIG.BLOCK_ID) > 0 do
+    -- KUNCI PERBAIKAN: Tetap berada di Home sampai seluruh blok di tas BENAR-BENAR HABIS (0)
+    while waitOnline() do
+        local inv = bot:getInventory()
+        if not inv or inv:findItem(CONFIG.BLOCK_ID) == 0 then
+            print("[Home] Seluruh blok di tas sudah selesai dipecahkan!")
+            break
+        end
+
         if isAtWhiteDoor() then
             print("[Alert] Respawn ke White Door saat break! Kembali ke posisi kerja...")
             bot:findPath(standX, standY)
             sleep(500)
         end
 
+        if not bot:isInTile(standX, standY) then
+            bot:findPath(standX, standY)
+            sleep(300)
+        end
+
         local world = bot:getWorld()
         if not world then break end
 
+        -- 1. Letakkan blok jika tile target kosong
         local target = world:getTile(bx, by)
         if target and target.fg == 0 then
             bot:place(bx, by, CONFIG.BLOCK_ID)
-            sleep(160)
+            sleep(placeDelay)
         end
 
+        -- 2. Pukul sampai blok hancur
         local hits = 0
         while waitOnline() and hits < maxHits do
             if isAtWhiteDoor() then break end
@@ -323,12 +338,11 @@ local function doBreakHome(dest)
             if not cur or cur.fg == 0 then break end
             bot:hit(bx, by)
             hits = hits + 1
-            sleep(180)
+            sleep(hitDelay)
         end
-        bot:collect(2)
-        if hits >= maxHits then break end
+        bot:collect(3)
 
-        -- Jika seed di tas > 190 saat break di home, drop 100 ke storage dan sisakan sebagian untuk plant
+        -- 3. Cek overflow seed saat break (> 190 drop 100 ke storage lalu kembali ke Home)
         if bot:getInventory():findItem(CONFIG.SEED_ID) > 190 then
             print(string.format("[Home] Seed di tas mencapai %d (> 190). Menyimpan 100 seed ke storage...", bot:getInventory():findItem(CONFIG.SEED_ID)))
             updateWebhook("Menyimpan 100 Seed ke Storage (Tas Penuh)", farmName)
@@ -341,32 +355,22 @@ local function doBreakHome(dest)
         end
     end
 
-    return STATE.PLANT
-end
+    -- 4. Cek Gems langsung di Home tanpa keluar world
+    print("[Info] Gems saat ini: " .. bot.gem_count)
 
-local function doPlant(dest)
-    local farmName = type(dest) == "table" and dest.world or dest
-    local seeds = bot:getInventory():findItem(CONFIG.SEED_ID)
-    if seeds == 0 then return STATE.BUY_PACK end
-
-    updateWebhook("Menanam Kembali Seed (Plant)", farmName)
-    if not warp(dest) then return STATE.PLANT end
-
-    local world = bot:getWorld()
-    if not world then return STATE.PLANT end
-
-    for _, tile in ipairs(world:getTilesSafe()) do
-        if not waitOnline() or bot:getInventory():findItem(CONFIG.SEED_ID) == 0 then break end
-        recoverIfAtWhiteDoor(dest)
-
-        if tile.fg == 0 and tile.bg ~= 0 and bot:findPath(tile.x, tile.y) then
-            bot:place(tile.x, tile.y, CONFIG.SEED_ID)
-            sleep(160)
+    local packCfg = CONFIG.AUTO_BUY_PACK
+    if packCfg and packCfg.ENABLED and packCfg.PricePack and packCfg.PackName then
+        if bot.gem_count >= packCfg.PricePack then
+            return STATE.BUY_PACK
         end
     end
 
-    print("[Info] Gems saat ini: " .. bot.gem_count)
-    return STATE.BUY_PACK
+    -- Jika ada seed untuk ditanam, lanjut tanam di farm
+    if bot:getInventory():findItem(CONFIG.SEED_ID) > 0 then
+        return STATE.PLANT
+    end
+
+    return STATE.HARVEST
 end
 
 local function doBuyPack(dest)
@@ -446,14 +450,33 @@ local function doStore(dest)
         end
     end
 
-    -- Jika tas masih penuh blok (>= 190), kembali ke home untuk break sampai tuntas
-    if bot:getInventory():findItem(CONFIG.BLOCK_ID) >= 190 then
-        return STATE.BREAK_HOME
-    end
-
-    -- Jika ada sisa seed untuk ditanam, lanjutkan plant
+    -- Jika ada sisa seed untuk ditanam, lanjutkan plant di farm
     if bot:getInventory():findItem(CONFIG.SEED_ID) > 0 then
         return STATE.PLANT
+    end
+
+    return STATE.HARVEST
+end
+
+local function doPlant(dest)
+    local farmName = type(dest) == "table" and dest.world or dest
+    local seeds = bot:getInventory():findItem(CONFIG.SEED_ID)
+    if seeds == 0 then return STATE.HARVEST end
+
+    updateWebhook("Menanam Kembali Seed (Plant)", farmName)
+    if not warp(dest) then return STATE.PLANT end
+
+    local world = bot:getWorld()
+    if not world then return STATE.PLANT end
+
+    for _, tile in ipairs(world:getTilesSafe()) do
+        if not waitOnline() or bot:getInventory():findItem(CONFIG.SEED_ID) == 0 then break end
+        recoverIfAtWhiteDoor(dest)
+
+        if tile.fg == 0 and tile.bg ~= 0 and bot:findPath(tile.x, tile.y) then
+            bot:place(tile.x, tile.y, CONFIG.SEED_ID)
+            sleep(160)
+        end
     end
 
     return STATE.HARVEST
@@ -475,12 +498,12 @@ for _, currentFarm in ipairs(CONFIG.FARMS) do
             currentState = doHarvest(currentFarm)
         elseif currentState == STATE.BREAK_HOME then
             currentState = doBreakHome(currentFarm)
-        elseif currentState == STATE.PLANT then
-            currentState = doPlant(currentFarm)
         elseif currentState == STATE.BUY_PACK then
             currentState = doBuyPack(currentFarm)
         elseif currentState == STATE.STORE then
             currentState = doStore(currentFarm)
+        elseif currentState == STATE.PLANT then
+            currentState = doPlant(currentFarm)
         elseif currentState == STATE.NEXT_WORLD then
             break
         end
