@@ -345,7 +345,7 @@ local function doHarvest(dest)
                     -- Hanya cek tile tepat di atasnya: wajib above.fg == 0 saja
                     -- (Jika above.fg == 0, berarti belum ada seed, belum ada tanaman, bebas dari .bg)
                     local above = world:getTile(tile.x, tile.y - 1)
-                    if above and above.fg == 0 and bot:findPath(tile.x, tile.y - 1) and world:getTile(tile.x, tile.y).bg ~= 0 then
+                    if above and above.fg == 0 and bot:findPath(tile.x, tile.y - 1) and world:getTile(tile.x, tile.y).fg ~= 0 then
                         bot:place(tile.x, tile.y - 1, CONFIG.SEED_ID)
                         sleep(160)
                         planted = planted + 1
@@ -645,7 +645,7 @@ local function doPlant(dest)
             if tile.fg ~= 0 and tile.fg ~= 6 and tile.y > 0 then
                 -- Hanya cek tile tepat di atasnya: wajib above.fg == 0 saja
                 local above = world:getTile(tile.x, tile.y - 1)
-                if above and above.fg == 0 and bot:findPath(tile.x, tile.y - 1) then
+                if above and above.fg == 0 and bot:findPath(tile.x, tile.y - 1) and world:getTile(tile.x, tile.y).fg ~= 0 then
                     bot:place(tile.x, tile.y - 1, CONFIG.SEED_ID)
                     sleep(160)
                     foundEmpty = true
