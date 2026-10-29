@@ -125,9 +125,10 @@ local function warp(dest)
     bot.auto_collect = false -- Matikan auto_collect setiap kali berpindah world
     local world = type(dest) == "table" and dest.world or dest
     local door = type(dest) == "table" and (dest.door or "") or ""
+    local upperWorld = type(world) == "string" and world:upper() or world
 
     if not waitOnline() then return false end
-    if bot:isInWorld(world) and bot:isInWorld() then
+    if (bot:isInWorld(world) or bot:isInWorld(upperWorld)) and bot:isInWorld() then
         if isAtWhiteDoor() and door ~= "" then
             bot:warp(world, door)
             sleep(1000)
@@ -139,8 +140,8 @@ local function warp(dest)
     -- Polling setiap 500ms agar begitu subserver transfer selesai bot langsung bergerak (rata-rata 1.5 - 2.5 detik)
     for _ = 1, 40 do
         sleep(500)
-        if bot:isInWorld(world) and bot:isInWorld() then
-            sleep(500) -- jeda settling streaming tile
+        if (bot:isInWorld(world) or bot:isInWorld(upperWorld)) and bot:isInWorld() then
+            sleep(600) -- jeda settling streaming tile
             if isAtWhiteDoor() and door ~= "" then
                 bot:warp(world, door)
                 sleep(600)
@@ -382,28 +383,35 @@ local function checkAndEquipPickaxe()
         return
     end
 
-    local world = bot:getWorld()
-    if not world then return end
+    print("[Pickaxe] Berhasil masuk world. Menunggu streaming objek dari server...")
+    sleep(1200)
 
-    -- Scan seluruh NetObject di world untuk mencari objek Pickaxe (ID 98)
-    local objects = world:getObjects()
+    -- Scan berulang hingga 5 kali agar data NetObject selesai di-stream sepenuhnya
     local foundPickaxe = false
+    for attempt = 1, 6 do
+        local world = bot:getWorld()
+        if world then
+            local objects = world:getObjects()
+            if objects and #objects > 0 then
+                for _, obj in ipairs(objects) do
+                    if obj.id == 98 then
+                        local tx = math.floor(obj.x / 32)
+                        local ty = math.floor(obj.y / 32)
+                        print(string.format("[Pickaxe] Objek Pickaxe ditemukan di koordinat (%d, %d). Menuju ke lokasi...", tx, ty))
 
-    if objects then
-        for _, obj in ipairs(objects) do
-            if obj.id == 98 then
-                local tx = math.floor(obj.x / 32)
-                local ty = math.floor(obj.y / 32)
-                print(string.format("[Pickaxe] Objek Pickaxe ditemukan di koordinat (%d, %d). Menuju ke lokasi...", tx, ty))
-
-                if world:isValidTile(tx, ty) and bot:findPath(tx, ty) then
-                    bot:collect(3)
-                    sleep(1000)
-                    foundPickaxe = true
-                    break
+                        if world:isValidTile(tx, ty) and bot:findPath(tx, ty) then
+                            bot:collect(3)
+                            sleep(1000)
+                            foundPickaxe = true
+                            break
+                        end
+                    end
                 end
             end
         end
+
+        if foundPickaxe then break end
+        sleep(500)
     end
 
     if not foundPickaxe then
