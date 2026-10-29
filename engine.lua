@@ -18,7 +18,7 @@ end
 -- ========================================================
 -- INISIALISASI & INTERVALS
 -- ========================================================
-bot.leave_world_before_warp = true
+bot.leave_world_before_warp = false -- Langsung warp antar-world tanpa exit terlebih dahulu
 
 local intervals = CONFIG.ACTION_INTERVALS or {}
 bot:setInterval(Action.hit, intervals.hit or 0.18)

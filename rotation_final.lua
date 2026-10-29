@@ -27,7 +27,7 @@ local CONFIG = {
 local bot = getBot()
 if not bot then return end
 
-bot.leave_world_before_warp = true
+bot.leave_world_before_warp = false
 bot:setInterval(Action.hit, CONFIG.ACTION_INTERVALS.hit)
 bot:setInterval(Action.place, CONFIG.ACTION_INTERVALS.place)
 bot:setInterval(Action.move, CONFIG.ACTION_INTERVALS.move)
