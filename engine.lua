@@ -327,6 +327,18 @@ local function doBreakHome(dest)
         end
         bot:collect(2)
         if hits >= maxHits then break end
+
+        -- Jika seed di tas > 190 saat break di home, drop 100 ke storage dan sisakan sebagian untuk plant
+        if bot:getInventory():findItem(CONFIG.SEED_ID) > 190 then
+            print(string.format("[Home] Seed di tas mencapai %d (> 190). Menyimpan 100 seed ke storage...", bot:getInventory():findItem(CONFIG.SEED_ID)))
+            updateWebhook("Menyimpan 100 Seed ke Storage (Tas Penuh)", farmName)
+            if warp(CONFIG.STORAGE) then
+                smartDrop(CONFIG.SEED_ID, 100, bot.x, bot.y, 1000)
+            end
+            warp(CONFIG.HOME)
+            bot:findPath(standX, standY)
+            sleep(400)
+        end
     end
 
     return STATE.PLANT
