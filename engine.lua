@@ -340,10 +340,8 @@ local function doHarvest(dest)
                 if not waitOnline() or bot:getInventory():findItem(CONFIG.SEED_ID) == 0 then break end
                 recoverIfAtWhiteDoor(dest)
 
-                -- Cek pijakan lantai (tanah/platform padat, bukan White Door)
-                if tile.fg ~= 0 and tile.fg ~= 6 and tile.y > 0 then
-                    -- Hanya cek tile tepat di atasnya: wajib above.fg == 0 saja
-                    -- (Jika above.fg == 0, berarti belum ada seed, belum ada tanaman, bebas dari .bg)
+                -- Cek pijakan lantai (tanah/platform padat, bukan White Door dan BUKAN seed/tanaman)
+                if tile.fg ~= 0 and tile.fg ~= 6 and tile.fg ~= CONFIG.SEED_ID and not tile:canHarvest() and tile.y > 0 then
                     local above = world:getTile(tile.x, tile.y - 1)
                     if above and above.fg == 0 and bot:findPath(tile.x, tile.y - 1) and world:getTile(tile.x, tile.y).fg ~= 0 then
                         bot:place(tile.x, tile.y - 1, CONFIG.SEED_ID)
@@ -641,9 +639,8 @@ local function doPlant(dest)
             if not waitOnline() or bot:getInventory():findItem(CONFIG.SEED_ID) == 0 then break end
             recoverIfAtWhiteDoor(dest)
 
-            -- Cek pijakan lantai (tanah/platform padat, bukan White Door)
-            if tile.fg ~= 0 and tile.fg ~= 6 and tile.y > 0 then
-                -- Hanya cek tile tepat di atasnya: wajib above.fg == 0 saja
+            -- Cek pijakan lantai (tanah/platform padat, bukan White Door dan BUKAN seed/tanaman)
+            if tile.fg ~= 0 and tile.fg ~= 6 and tile.fg ~= CONFIG.SEED_ID and not tile:canHarvest() and tile.y > 0 then
                 local above = world:getTile(tile.x, tile.y - 1)
                 if above and above.fg == 0 and bot:findPath(tile.x, tile.y - 1) and world:getTile(tile.x, tile.y).fg ~= 0 then
                     bot:place(tile.x, tile.y - 1, CONFIG.SEED_ID)
