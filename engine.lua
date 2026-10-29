@@ -437,14 +437,20 @@ end
 -- ========================================================
 local function getZigzagReadyTrees()
     local world = bot:getWorld()
-    if not world then return {} end
+    if not world then return {}, 0 end
 
     local rows = {}
+    local readyCount = 0
+    local growingCount = 0
+
     for _, tile in ipairs(world:getTilesSafe()) do
         if tile:canHarvest() then
             local y = tile.y
             if not rows[y] then rows[y] = {} end
             table.insert(rows[y], tile)
+            readyCount = readyCount + 1
+        elseif tile.fg == CONFIG.SEED_ID then
+            growingCount = growingCount + 1
         end
     end
 
@@ -467,7 +473,7 @@ local function getZigzagReadyTrees()
         end
     end
 
-    return zigzagTrees
+    return zigzagTrees, growingCount
 end
 
 local function getZigzagPlantSpots()
@@ -516,8 +522,9 @@ local function doHarvest(dest)
     local farmName = type(dest) == "table" and dest.world or dest
     updateWebhook("Memanen Pohon (Harvest)", farmName)
 
-    if not warp(dest) then return STATE.NEXT_WORLD end
+    if not warp(dest) then return STATE.HARVEST end
 
+    sleep(1000) -- Tunggu stabilisasi streaming seluruh data tile dari server
     local world = bot:getWorld()
     if not world then return STATE.HARVEST end
 
@@ -560,8 +567,8 @@ local function doHarvest(dest)
 
     local maxBlocks = CONFIG.MAX_BLOCK_BACKPACK or 190
     local harvested = 0
-    local readyTrees = getZigzagReadyTrees()
-    print(string.format("[Farm] Memulai panen %d pohon dengan rute ZIGZAG...", #readyTrees))
+    local readyTrees, growingCount = getZigzagReadyTrees()
+    print(string.format("[Farm] Status World: %d pohon siap panen | %d pohon masih dalam pertumbuhan", #readyTrees, growingCount))
 
     for _, tile in ipairs(readyTrees) do
         if not waitOnline() then return STATE.HARVEST end
@@ -569,6 +576,7 @@ local function doHarvest(dest)
 
         local inv = bot:getInventory()
         if inv:findItem(CONFIG.BLOCK_ID) >= maxBlocks or (inv:findItem(CONFIG.BLOCK_ID) == 0 and inv.emptyslots == 0) then
+            print(string.format("[Farm] Blok di tas mencapai batas (%d). Menuju Home untuk break...", inv:findItem(CONFIG.BLOCK_ID)))
             return STATE.BREAK_HOME
         end
 
@@ -576,7 +584,12 @@ local function doHarvest(dest)
             return STATE.STORE
         end
 
-        if tile:canHarvest() and bot:findPath(tile.x, tile.y) then
+        local reached = bot:findPath(tile.x, tile.y)
+        if not reached then
+            reached = bot:findPath(tile.x - 1, tile.y) or bot:findPath(tile.x + 1, tile.y)
+        end
+
+        if tile:canHarvest() and reached then
             bot:hit(tile.x, tile.y)
             sleep(180)
             bot:collect(3)
@@ -585,7 +598,21 @@ local function doHarvest(dest)
     end
 
     collectFloatingObjects(dest)
-    return (harvested > 0 or bot:getInventory():findItem(CONFIG.BLOCK_ID) > 0) and STATE.BREAK_HOME or STATE.NEXT_WORLD
+
+    -- Jika ada blok yang berhasil dipanen, pulang ke Home untuk break
+    if bot:getInventory():findItem(CONFIG.BLOCK_ID) > 0 then
+        return STATE.BREAK_HOME
+    end
+
+    -- Cek ulang apakah masih ada pohon siap panen yang tersisa
+    local checkRemaining = getZigzagReadyTrees()
+    if #checkRemaining > 0 then
+        print(string.format("[Farm] Masih ada %d pohon siap panen yang belum terjangkau. Mengulangi putaran...", #checkRemaining))
+        return STATE.HARVEST
+    end
+
+    print(string.format("[Farm] Seluruh pohon siap panen di world ini telah habis dipanen (%d pohon masih tumbuh).", growingCount))
+    return STATE.NEXT_WORLD
 end
 
 local function findBreakSpot()
