@@ -242,36 +242,27 @@ local function doHarvest(dest)
         end
     end
 
-    -- Selesai scan seluruh world farm
     return (harvested > 0 or bot:getInventory():findItem(CONFIG.BLOCK_ID) > 0) and STATE.BREAK_HOME or STATE.NEXT_WORLD
 end
 
--- Mencari spot kosong untuk berdiri dan memecahkan blok di Home World
+-- Mencari spot berdiri di Home World dengan 3 tile kosong vertikal ke atas (y-1, y-2, y-3)
 local function findBreakSpot()
     local world = bot:getWorld()
-    if not world then return bot.x, bot.y, bot.x + 1, bot.y end
+    if not world then return bot.x, bot.y end
 
     for _, tile in ipairs(world:getTilesSafe()) do
         local sx, sy = tile.x, tile.y
-        if sx >= 2 and sx <= (world.x - 3) and sy >= 2 and sy <= (world.y - 3) then
+        -- Pastikan sy >= 4 agar sy - 3 tidak keluar batas atas world
+        if sx >= 2 and sx <= (world.x - 3) and sy >= 4 and sy <= (world.y - 3) then
             if tile.fg == 0 and tile.fg ~= 6 then
                 local ground = world:getTile(sx, sy + 1)
                 if ground and ground.fg ~= 0 and ground.fg ~= 6 then
-                    -- Cek spot break di sisi kanan
-                    local rightTile = world:getTile(sx + 1, sy)
-                    local rightGround = world:getTile(sx + 1, sy + 1)
-                    if rightTile and rightTile.fg == 0 and rightGround and rightGround.fg ~= 0 then
+                    local t1 = world:getTile(sx, sy - 1)
+                    local t2 = world:getTile(sx, sy - 2)
+                    local t3 = world:getTile(sx, sy - 3)
+                    if t1 and t1.fg == 0 and t2 and t2.fg == 0 and t3 and t3.fg == 0 then
                         if bot:findPath(sx, sy) then
-                            return sx, sy, sx + 1, sy
-                        end
-                    end
-
-                    -- Cek spot break di sisi kiri
-                    local leftTile = world:getTile(sx - 1, sy)
-                    local leftGround = world:getTile(sx - 1, sy + 1)
-                    if leftTile and leftTile.fg == 0 and leftGround and leftGround.fg ~= 0 then
-                        if bot:findPath(sx, sy) then
-                            return sx, sy, sx - 1, sy
+                            return sx, sy
                         end
                     end
                 end
@@ -279,7 +270,7 @@ local function findBreakSpot()
         end
     end
 
-    return bot.x, bot.y, bot.x + 1, bot.y
+    return bot.x, bot.y
 end
 
 local function doBreakHome(dest)
@@ -287,21 +278,22 @@ local function doBreakHome(dest)
     local blocks = bot:getInventory():findItem(CONFIG.BLOCK_ID)
     if blocks == 0 then return STATE.PLANT end
 
-    updateWebhook("Memecahkan Blok di Home", farmName)
+    updateWebhook("Memecahkan Blok di Home (3 Blok Vertikal)", farmName)
     if not warp(CONFIG.HOME) then return STATE.BREAK_HOME end
 
-    print("[Home] Melakukan auto-scan spot kosong untuk memecah blok...")
-    local standX, standY, bx, by = findBreakSpot()
-    print(string.format("[Home] Spot terpilih: Berdiri (%d, %d) | Target Break (%d, %d)", standX, standY, bx, by))
+    print("[Home] Auto-scan spot 3 blok vertikal di atas bot...")
+    local standX, standY = findBreakSpot()
+    print(string.format("[Home] Spot terpilih: Berdiri (%d, %d) | Target Break Atas: y-1, y-2, y-3", standX, standY))
 
     bot:findPath(standX, standY)
     sleep(400)
 
+    local targetOffsets = {-1, -2, -3}
     local maxHits = CONFIG.PUNCH_RETRY_MAX or 15
     local placeDelay = (intervals.place or 0.16) * 1000
     local hitDelay = (intervals.hit or 0.18) * 1000
 
-    -- KUNCI PERBAIKAN: Tetap berada di Home sampai seluruh blok di tas BENAR-BENAR HABIS (0)
+    -- Tetap berada di Home sampai seluruh blok di tas BENAR-BENAR HABIS (0)
     while waitOnline() do
         local inv = bot:getInventory()
         if not inv or inv:findItem(CONFIG.BLOCK_ID) == 0 then
@@ -323,22 +315,34 @@ local function doBreakHome(dest)
         local world = bot:getWorld()
         if not world then break end
 
-        -- 1. Letakkan blok jika tile target kosong
-        local target = world:getTile(bx, by)
-        if target and target.fg == 0 then
-            bot:place(bx, by, CONFIG.BLOCK_ID)
-            sleep(placeDelay)
+        -- 1. Letakkan hingga 3 blok vertikal di atas kepala
+        for _, dy in ipairs(targetOffsets) do
+            local ty = standY + dy
+            local target = world:getTile(standX, ty)
+            if target and target.fg == 0 and bot:getInventory():findItem(CONFIG.BLOCK_ID) > 0 then
+                bot:place(standX, ty, CONFIG.BLOCK_ID)
+                sleep(placeDelay)
+            end
         end
 
-        -- 2. Pukul sampai blok hancur
-        local hits = 0
-        while waitOnline() and hits < maxHits do
+        -- 2. Pukul ketiga blok sampai semuanya hancur
+        local totalHits = 0
+        while waitOnline() and totalHits < (maxHits * 3) do
             if isAtWhiteDoor() then break end
-            local cur = bot:getWorld():getTile(bx, by)
-            if not cur or cur.fg == 0 then break end
-            bot:hit(bx, by)
-            hits = hits + 1
-            sleep(hitDelay)
+
+            local anyBlock = false
+            for _, dy in ipairs(targetOffsets) do
+                local ty = standY + dy
+                local cur = bot:getWorld():getTile(standX, ty)
+                if cur and cur.fg ~= 0 then
+                    anyBlock = true
+                    bot:hit(standX, ty)
+                    totalHits = totalHits + 1
+                    sleep(hitDelay)
+                end
+            end
+
+            if not anyBlock then break end
         end
         bot:collect(3)
 
@@ -365,7 +369,6 @@ local function doBreakHome(dest)
         end
     end
 
-    -- Jika ada seed untuk ditanam, lanjut tanam di farm
     if bot:getInventory():findItem(CONFIG.SEED_ID) > 0 then
         return STATE.PLANT
     end
@@ -450,7 +453,6 @@ local function doStore(dest)
         end
     end
 
-    -- Jika ada sisa seed untuk ditanam, lanjutkan plant di farm
     if bot:getInventory():findItem(CONFIG.SEED_ID) > 0 then
         return STATE.PLANT
     end
