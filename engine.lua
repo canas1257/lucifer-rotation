@@ -225,7 +225,7 @@ local function doHarvest(dest)
 
         local inv = bot:getInventory()
         -- Aturan Growtopia: Kapasitas per item max 200. Jika blok >= 190, wajib pulang ke home untuk break
-        if inv:findItem(CONFIG.BLOCK_ID) >= 190 or inv.emptyslots <= 1 then
+        if inv:findItem(CONFIG.BLOCK_ID) >= 190 or (inv:findItem(CONFIG.BLOCK_ID) == 0 and inv.emptyslots == 0) then
             return STATE.BREAK_HOME
         end
 
