@@ -245,21 +245,21 @@ local function doHarvest(dest)
     return (harvested > 0 or bot:getInventory():findItem(CONFIG.BLOCK_ID) > 0) and STATE.BREAK_HOME or STATE.NEXT_WORLD
 end
 
--- Mencari spot berdiri di Home World dengan 3 tile kosong vertikal ke atas (y-1, y-2, y-3)
+-- Mencari spot berdiri di Home World dengan 3 tile kosong di kiri-atas (x, y-1), (x-1, y-1), (x-2, y-1)
 local function findBreakSpot()
     local world = bot:getWorld()
     if not world then return bot.x, bot.y end
 
     for _, tile in ipairs(world:getTilesSafe()) do
         local sx, sy = tile.x, tile.y
-        -- Pastikan sy >= 4 agar sy - 3 tidak keluar batas atas world
-        if sx >= 2 and sx <= (world.x - 3) and sy >= 4 and sy <= (world.y - 3) then
+        -- Pastikan sx >= 3 agar sx - 2 tidak keluar batas kiri world, dan sy >= 2
+        if sx >= 3 and sx <= (world.x - 3) and sy >= 2 and sy <= (world.y - 3) then
             if tile.fg == 0 and tile.fg ~= 6 then
                 local ground = world:getTile(sx, sy + 1)
                 if ground and ground.fg ~= 0 and ground.fg ~= 6 then
                     local t1 = world:getTile(sx, sy - 1)
-                    local t2 = world:getTile(sx, sy - 2)
-                    local t3 = world:getTile(sx, sy - 3)
+                    local t2 = world:getTile(sx - 1, sy - 1)
+                    local t3 = world:getTile(sx - 2, sy - 1)
                     if t1 and t1.fg == 0 and t2 and t2.fg == 0 and t3 and t3.fg == 0 then
                         if bot:findPath(sx, sy) then
                             return sx, sy
@@ -278,17 +278,24 @@ local function doBreakHome(dest)
     local blocks = bot:getInventory():findItem(CONFIG.BLOCK_ID)
     if blocks == 0 then return STATE.PLANT end
 
-    updateWebhook("Memecahkan Blok di Home (3 Blok Vertikal)", farmName)
+    updateWebhook("Memecahkan Blok di Home (3 Blok Atas-Kiri)", farmName)
     if not warp(CONFIG.HOME) then return STATE.BREAK_HOME end
 
-    print("[Home] Auto-scan spot 3 blok vertikal di atas bot...")
+    print("[Home] Auto-scan spot 3 blok di atas-kiri bot...")
     local standX, standY = findBreakSpot()
-    print(string.format("[Home] Spot terpilih: Berdiri (%d, %d) | Target Break Atas: y-1, y-2, y-3", standX, standY))
+    print(string.format("[Home] Spot terpilih: Berdiri (%d, %d) | Target Break: (%d, %d), (%d, %d), (%d, %d)",
+        standX, standY, standX, standY - 1, standX - 1, standY - 1, standX - 2, standY - 1))
 
     bot:findPath(standX, standY)
     sleep(400)
 
-    local targetOffsets = {-1, -2, -3}
+    -- Formasi 3 blok persis sesuai instruksi Bos Anas:
+    -- (standX, standY - 1), (standX - 1, standY - 1), (standX - 2, standY - 1)
+    local targetOffsets = {
+        { dx = 0, dy = -1 },
+        { dx = -1, dy = -1 },
+        { dx = -2, dy = -1 },
+    }
     local maxHits = CONFIG.PUNCH_RETRY_MAX or 15
     local placeDelay = (intervals.place or 0.16) * 1000
     local hitDelay = (intervals.hit or 0.18) * 1000
@@ -315,12 +322,13 @@ local function doBreakHome(dest)
         local world = bot:getWorld()
         if not world then break end
 
-        -- 1. Letakkan hingga 3 blok vertikal di atas kepala
-        for _, dy in ipairs(targetOffsets) do
-            local ty = standY + dy
-            local target = world:getTile(standX, ty)
+        -- 1. Letakkan hingga 3 blok di (x, y-1), (x-1, y-1), (x-2, y-1)
+        for _, off in ipairs(targetOffsets) do
+            local tx = standX + off.dx
+            local ty = standY + off.dy
+            local target = world:getTile(tx, ty)
             if target and target.fg == 0 and bot:getInventory():findItem(CONFIG.BLOCK_ID) > 0 then
-                bot:place(standX, ty, CONFIG.BLOCK_ID)
+                bot:place(tx, ty, CONFIG.BLOCK_ID)
                 sleep(placeDelay)
             end
         end
@@ -331,12 +339,13 @@ local function doBreakHome(dest)
             if isAtWhiteDoor() then break end
 
             local anyBlock = false
-            for _, dy in ipairs(targetOffsets) do
-                local ty = standY + dy
-                local cur = bot:getWorld():getTile(standX, ty)
+            for _, off in ipairs(targetOffsets) do
+                local tx = standX + off.dx
+                local ty = standY + off.dy
+                local cur = bot:getWorld():getTile(tx, ty)
                 if cur and cur.fg ~= 0 then
                     anyBlock = true
-                    bot:hit(standX, ty)
+                    bot:hit(tx, ty)
                     totalHits = totalHits + 1
                     sleep(hitDelay)
                 end
