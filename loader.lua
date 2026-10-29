@@ -57,6 +57,16 @@ local CONFIG = {
         DropPlacement = 1422,            -- Koordinat tile / index drop di storage (1422 -> x:22, y:14)
         DelayDrop = 2000,                -- Delay navigasi sebelum drop (ms)
         DelayFPDrop = 1000,              -- Delay fast drop item (ms)
+    },
+
+    -- ====================================================
+    -- Setting For Auto Trash (Setiap Selesai Break di Home)
+    -- ====================================================
+    AUTO_TRASH = {
+        ENABLED = true,
+        -- Daftar ID item kustom yang ingin disimpan (JANGAN dibuang)
+        -- Pickaxe (98), Blok target, Seed target, dan Item hasil Pack otomatis aman!
+        KEEP_ITEMS = { 98, 18, 32 }, -- Contoh: 18 (Fist), 32 (Wrench), atau ID item lainnya
     }
 }
 

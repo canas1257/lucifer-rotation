@@ -259,6 +259,61 @@ local function collectFloatingObjects(dest)
 end
 
 -- ========================================================
+-- AUTO-TRASH SAMPAH (DIJALANKAN SETIAP SELESAI BREAK DI HOME)
+-- ========================================================
+local function doAutoTrash(farmName)
+    local trashCfg = CONFIG.AUTO_TRASH
+    if not (trashCfg and trashCfg.ENABLED) then return end
+
+    local inv = bot:getInventory()
+    if not inv then return end
+
+    -- Daftar Whitelist ID yang TIDAK BOLEH dibuang
+    local keepLookup = {
+        [98] = true, -- Pickaxe wajib aman
+        [CONFIG.BLOCK_ID] = true,
+        [CONFIG.SEED_ID] = true,
+    }
+
+    -- Lindungi seluruh item hasil pack
+    if CONFIG.AUTO_BUY_PACK and CONFIG.AUTO_BUY_PACK.ItemIDOfPack then
+        for _, id in ipairs(CONFIG.AUTO_BUY_PACK.ItemIDOfPack) do
+            keepLookup[id] = true
+        end
+    end
+
+    -- Lindungi custom item yang diatur oleh user
+    if trashCfg.KEEP_ITEMS then
+        for _, id in ipairs(trashCfg.KEEP_ITEMS) do
+            keepLookup[id] = true
+        end
+    end
+
+    local items = inv:getItems()
+    if not items or #items == 0 then return end
+
+    local trashedAny = false
+    for _, item in ipairs(items) do
+        if not waitOnline() then break end
+
+        -- Jangan buang item yang sedang dipakai (isActive) atau item yang dikecualikan
+        if not item.isActive and not keepLookup[item.id] and item.count > 0 then
+            local info = getInfo(item.id)
+            local itemName = info and info.name or ("ID " .. tostring(item.id))
+            print(string.format("[AutoTrash] Membuang %d unit item sampah: %s [ID %d]...", item.count, itemName, item.id))
+            bot:fastTrash(item.id, item.count)
+            sleep(800)
+            trashedAny = true
+        end
+    end
+
+    if trashedAny then
+        print("[AutoTrash] Pembersihan tas selesai.")
+        updateWebhook("Pembersihan Tas Selesai (Auto Trash)", farmName)
+    end
+end
+
+-- ========================================================
 -- STATE HANDLERS
 -- ========================================================
 local function doHarvest(dest)
@@ -466,7 +521,10 @@ local function doBreakHome(dest)
 
     bot.auto_collect = false
 
-    -- 4. Cek Gems di Home
+    -- 4. Auto-Trash sampah setelah selesai break di Home
+    doAutoTrash(farmName)
+
+    -- 5. Cek Gems di Home
     print("[Info] Gems saat ini: " .. bot.gem_count)
 
     local packCfg = CONFIG.AUTO_BUY_PACK
