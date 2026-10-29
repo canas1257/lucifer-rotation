@@ -429,6 +429,86 @@ local function checkAndEquipPickaxe()
 end
 
 -- ========================================================
+-- HELPER NAVIGASI ZIGZAG (SNAKE PATTERN)
+-- Mengurutkan pohon & lahan tanam agar bot berjalan zigzag:
+-- Baris 1: Kiri -> Kanan (x naik)
+-- Baris 2: Kanan -> Kiri (x turun)
+-- Mencegah bot berjalan mundur 100 tile bolak-balik setiap pergantian baris!
+-- ========================================================
+local function getZigzagReadyTrees()
+    local world = bot:getWorld()
+    if not world then return {} end
+
+    local rows = {}
+    for _, tile in ipairs(world:getTilesSafe()) do
+        if tile:canHarvest() then
+            local y = tile.y
+            if not rows[y] then rows[y] = {} end
+            table.insert(rows[y], tile)
+        end
+    end
+
+    local sortedY = {}
+    for y in pairs(rows) do
+        table.insert(sortedY, y)
+    end
+    table.sort(sortedY)
+
+    local zigzagTrees = {}
+    for i, y in ipairs(sortedY) do
+        local rowTiles = rows[y]
+        if i % 2 == 1 then
+            table.sort(rowTiles, function(a, b) return a.x < b.x end)
+        else
+            table.sort(rowTiles, function(a, b) return a.x > b.x end)
+        end
+        for _, t in ipairs(rowTiles) do
+            table.insert(zigzagTrees, t)
+        end
+    end
+
+    return zigzagTrees
+end
+
+local function getZigzagPlantSpots()
+    local world = bot:getWorld()
+    if not world then return {} end
+
+    local rows = {}
+    for _, tile in ipairs(world:getTilesSafe()) do
+        if tile.fg ~= 0 and tile.fg ~= 6 and tile.fg ~= CONFIG.SEED_ID and not tile:canHarvest() and tile.y > 0 then
+            local above = world:getTile(tile.x, tile.y - 1)
+            if above and above.fg == 0 then
+                local y = tile.y - 1
+                if not rows[y] then rows[y] = {} end
+                table.insert(rows[y], { x = tile.x, y = y, groundX = tile.x, groundY = tile.y })
+            end
+        end
+    end
+
+    local sortedY = {}
+    for y in pairs(rows) do
+        table.insert(sortedY, y)
+    end
+    table.sort(sortedY)
+
+    local zigzagSpots = {}
+    for i, y in ipairs(sortedY) do
+        local rowSpots = rows[y]
+        if i % 2 == 1 then
+            table.sort(rowSpots, function(a, b) return a.x < b.x end)
+        else
+            table.sort(rowSpots, function(a, b) return a.x > b.x end)
+        end
+        for _, s in ipairs(rowSpots) do
+            table.insert(zigzagSpots, s)
+        end
+    end
+
+    return zigzagSpots
+end
+
+-- ========================================================
 -- STATE HANDLERS
 -- ========================================================
 local function doHarvest(dest)
@@ -444,40 +524,46 @@ local function doHarvest(dest)
     -- 1. Ambil objek tercecer di farm
     collectFloatingObjects(dest)
 
-    -- 2. Tanam seluruh seed di tas sampai lahan kosong benar-benar habis
+    -- 2. Tanam seluruh seed di tas dengan pola Zigzag sampai lahan kosong benar-benar habis
     local initialSeeds = bot:getInventory():findItem(CONFIG.SEED_ID)
     if initialSeeds > 0 then
-        print(string.format("[Farm] Ditemukan %d seed di tas. Menanam sampai tidak ada tempat kosong...", initialSeeds))
+        print(string.format("[Farm] Ditemukan %d seed di tas. Menanam pola Zigzag sampai lahan penuh...", initialSeeds))
         local planted = 0
         while waitOnline() and bot:getInventory():findItem(CONFIG.SEED_ID) > 0 do
-            local foundEmptySpot = false
-            for _, tile in ipairs(world:getTilesSafe()) do
-                if not waitOnline() or bot:getInventory():findItem(CONFIG.SEED_ID) == 0 then break end
-                reconnectGuard(dest, tile.x, tile.y - 1)
-
-                -- Cek pijakan lantai (tanah/platform padat, bukan White Door dan BUKAN seed/tanaman)
-                if tile.fg ~= 0 and tile.fg ~= 6 and tile.fg ~= CONFIG.SEED_ID and not tile:canHarvest() and tile.y > 0 then
-                    local above = world:getTile(tile.x, tile.y - 1)
-                    if above and above.fg == 0 and bot:findPath(tile.x, tile.y - 1) and world:getTile(tile.x, tile.y).fg ~= 0 then
-                        bot:place(tile.x, tile.y - 1, CONFIG.SEED_ID)
-                        sleep(160)
-                        planted = planted + 1
-                        foundEmptySpot = true
-                    end
-                end
-            end
-
-            if not foundEmptySpot then
+            local plantSpots = getZigzagPlantSpots()
+            if #plantSpots == 0 then
                 print(string.format("[Farm] Lahan kosong habis (tertanam %d seed). Sisa di tas: %d. Lanjut ke proses harvest...",
                     planted, bot:getInventory():findItem(CONFIG.SEED_ID)))
                 break
             end
+
+            local plantedAny = false
+            for _, spot in ipairs(plantSpots) do
+                if not waitOnline() or bot:getInventory():findItem(CONFIG.SEED_ID) == 0 then break end
+                reconnectGuard(dest, spot.x, spot.y)
+
+                local curAbove = world:getTile(spot.x, spot.y)
+                local curGround = world:getTile(spot.groundX, spot.groundY)
+                if curAbove and curAbove.fg == 0 and curGround and curGround.fg ~= 0 and curGround.fg ~= 6 and curGround.fg ~= CONFIG.SEED_ID then
+                    if bot:findPath(spot.x, spot.y) then
+                        bot:place(spot.x, spot.y, CONFIG.SEED_ID)
+                        sleep(160)
+                        planted = planted + 1
+                        plantedAny = true
+                    end
+                end
+            end
+
+            if not plantedAny then break end
         end
     end
 
     local maxBlocks = CONFIG.MAX_BLOCK_BACKPACK or 190
     local harvested = 0
-    for _, tile in ipairs(world:getTilesSafe()) do
+    local readyTrees = getZigzagReadyTrees()
+    print(string.format("[Farm] Memulai panen %d pohon dengan rute ZIGZAG...", #readyTrees))
+
+    for _, tile in ipairs(readyTrees) do
         if not waitOnline() then return STATE.HARVEST end
         reconnectGuard(dest, tile.x, tile.y)
 
@@ -782,28 +868,31 @@ local function doPlant(dest)
 
     collectFloatingObjects(dest)
 
-    print(string.format("[Plant] Memulai penanaman seed (tersedia %d seed di tas)...", seeds))
+    print(string.format("[Plant] Memulai penanaman seed pola Zigzag (tersedia %d seed di tas)...", seeds))
     while waitOnline() and bot:getInventory():findItem(CONFIG.SEED_ID) > 0 do
-        local foundEmpty = false
-        for _, tile in ipairs(world:getTilesSafe()) do
-            if not waitOnline() or bot:getInventory():findItem(CONFIG.SEED_ID) == 0 then break end
-            reconnectGuard(dest, tile.x, tile.y - 1)
+        local plantSpots = getZigzagPlantSpots()
+        if #plantSpots == 0 then
+            print("[Plant] Lahan kosong habis / tidak ada tempat lagi. Lanjut ke proses harvest...")
+            break
+        end
 
-            -- Cek pijakan lantai (tanah/platform padat, bukan White Door dan BUKAN seed/tanaman)
-            if tile.fg ~= 0 and tile.fg ~= 6 and tile.fg ~= CONFIG.SEED_ID and not tile:canHarvest() and tile.y > 0 then
-                local above = world:getTile(tile.x, tile.y - 1)
-                if above and above.fg == 0 and bot:findPath(tile.x, tile.y - 1) and world:getTile(tile.x, tile.y).fg ~= 0 then
-                    bot:place(tile.x, tile.y - 1, CONFIG.SEED_ID)
+        local plantedAny = false
+        for _, spot in ipairs(plantSpots) do
+            if not waitOnline() or bot:getInventory():findItem(CONFIG.SEED_ID) == 0 then break end
+            reconnectGuard(dest, spot.x, spot.y)
+
+            local curAbove = world:getTile(spot.x, spot.y)
+            local curGround = world:getTile(spot.groundX, spot.groundY)
+            if curAbove and curAbove.fg == 0 and curGround and curGround.fg ~= 0 and curGround.fg ~= 6 and curGround.fg ~= CONFIG.SEED_ID then
+                if bot:findPath(spot.x, spot.y) then
+                    bot:place(spot.x, spot.y, CONFIG.SEED_ID)
                     sleep(160)
-                    foundEmpty = true
+                    plantedAny = true
                 end
             end
         end
 
-        if not foundEmpty then
-            print("[Plant] Lahan kosong habis / tidak ada tempat lagi. Lanjut ke proses harvest...")
-            break
-        end
+        if not plantedAny then break end
     end
 
     collectFloatingObjects(dest)
