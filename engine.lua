@@ -1,6 +1,6 @@
 -- engine.lua
--- Core Rotation State Machine with Webhook Live Monitor & Auto Buy Pack
--- Target: Lucifer v2.86 | https://github.com/canas1257/lucifer-rotation
+-- Core Rotation State Machine for Lucifer v2.86
+-- https://github.com/canas1257/lucifer-rotation
 -- Dipanggil otomatis oleh loader.lua
 
 local CONFIG = ... or _G.CONFIG
@@ -35,55 +35,66 @@ local STATE = {
 }
 
 -- ========================================================
--- WEBHOOK MONITORING (LIVE DASHBOARD)
+-- DISCORD WEBHOOK MONITORING (EDIT PESAN REALTIME)
 -- ========================================================
 local webhookClient = nil
-if CONFIG.WEBHOOK and CONFIG.WEBHOOK.ENABLED and CONFIG.WEBHOOK.URL and CONFIG.WEBHOOK.URL ~= "" then
-    webhookClient = Webhook.new(CONFIG.WEBHOOK.URL)
-    if CONFIG.WEBHOOK.MESSAGE_ID and CONFIG.WEBHOOK.MESSAGE_ID ~= "" then
-        webhookClient.message_id = tostring(CONFIG.WEBHOOK.MESSAGE_ID)
+local lastWebhookSent = 0
+
+local function updateWebhook(currentAction, activeFarm)
+    local cfg = CONFIG.WEBHOOK
+    if not cfg or not cfg.ENABLED or not cfg.URL or cfg.URL == "" or cfg.URL:find("MASUKKAN_URL") then
+        return
     end
-end
 
-local function updateWebhook(activity, currentFarm)
-    if not webhookClient then return end
+    local now = os.time and os.time() or 0
+    if (now - lastWebhookSent) < 3 then return end
+    lastWebhookSent = now
 
-    local worldName = bot:isInWorld() and bot:getWorld().name or "In Transit"
-    local inv = bot:getInventory()
-    local emptySlots = inv and inv.emptyslots or 0
-    local totalSlots = inv and inv.slotcount or 0
-    local ping = bot.getPing and bot:getPing() or 0
-    local uptime = bot.getActiveTime and bot:getActiveTime() or "-"
+    if not webhookClient then
+        webhookClient = Webhook.new(cfg.URL)
+        webhookClient.username = "Lucifer Monitor (" .. tostring(bot.name) .. ")"
+    end
+
+    if cfg.MESSAGE_ID and cfg.MESSAGE_ID ~= "" then
+        webhookClient.message_id = tostring(cfg.MESSAGE_ID)
+    end
+
     local isOnline = (bot.status == BotStatus.online)
+    local currentWorld = (bot:isInWorld() and bot:getWorld().name or "In Transit")
+    local tilePos = string.format("(%d, %d)", bot.x or 0, bot.y or 0)
+    local ping = tostring(bot:getPing()) .. " ms"
+    local gems = tostring(bot.gem_count or 0)
 
-    webhookClient.embed1.use = true
-    webhookClient.embed1.title = "🤖 Bot Status Monitor — " .. (bot.name or "Lucifer Bot")
-    webhookClient.embed1.color = isOnline and 3066993 or 15158332
-    webhookClient.embed1.description = "Live monitor status aktivitas bot & auto buy pack"
+    local inv = bot:getInventory()
+    local slots = inv and (tostring(inv.itemcount) .. "/" .. tostring(inv.slotcount)) or "-"
+    local emptySlots = inv and tostring(inv.emptyslots) or "-"
 
-    webhookClient.embed1:addField("Status Bot", isOnline and "🟢 Online" or "🔴 Offline (" .. tostring(bot.status) .. ")", true)
-    webhookClient.embed1:addField("World Sekarang", "🗺️ `" .. worldName .. "`", true)
-    webhookClient.embed1:addField("Target Farm", "🌾 `" .. tostring(currentFarm or "-") .. "`", true)
-
-    webhookClient.embed1:addField("Aktivitas", "⚙️ " .. tostring(activity or "Idle"), false)
-
-    webhookClient.embed1:addField("Gems", "💎 " .. tostring(bot.gem_count or 0), true)
-    webhookClient.embed1:addField("Tas (Slot)", "🎒 " .. tostring(emptySlots) .. " / " .. tostring(totalSlots) .. " kosong", true)
-    webhookClient.embed1:addField("Ping", "📶 " .. tostring(ping) .. " ms", true)
-    webhookClient.embed1:addField("Waktu Aktif", "⏱️ " .. tostring(uptime), true)
-
-    if CONFIG.AUTO_BUY_PACK and CONFIG.AUTO_BUY_PACK.ENABLED and CONFIG.AUTO_BUY_PACK.ItemIDOfPack then
-        local packItemsInfo = {}
-        for _, id in ipairs(CONFIG.AUTO_BUY_PACK.ItemIDOfPack) do
-            local cnt = inv and inv:findItem(id) or 0
-            local info = getInfo(id)
-            local name = info and info.name or ("ID " .. tostring(id))
-            table.insert(packItemsInfo, string.format("%s: %d", name, cnt))
+    local packItemStr = "-"
+    local packCfg = CONFIG.AUTO_BUY_PACK
+    if packCfg and packCfg.ENABLED and packCfg.ItemIDOfPack and inv then
+        local parts = {}
+        for _, id in ipairs(packCfg.ItemIDOfPack) do
+            local c = inv:findItem(id)
+            if c > 0 then table.insert(parts, string.format("ID %d: %d", id, c)) end
         end
-        if #packItemsInfo > 0 then
-            webhookClient.embed1:addField("Item Pack (di Tas)", "📦 " .. table.concat(packItemsInfo, ", "), false)
-        end
+        if #parts > 0 then packItemStr = table.concat(parts, ", ") end
     end
+
+    local statusColor = isOnline and 3066993 or 15158332
+
+    webhookClient.content = ""
+    webhookClient.embed1.use = true
+    webhookClient.embed1.color = statusColor
+    webhookClient.embed1.title = "📊 Lucifer Rotation v2.86 — " .. tostring(bot.name)
+    webhookClient.embed1.description = string.format("**Aktivitas:** %s\n**Target Farm:** %s", tostring(currentAction or "-"), tostring(activeFarm or "-"))
+
+    webhookClient.embed1:addField("Status", isOnline and "🟢 ONLINE" or "🔴 OFFLINE", true)
+    webhookClient.embed1:addField("World Sekarang", currentWorld, true)
+    webhookClient.embed1:addField("Posisi Tile", tilePos, true)
+    webhookClient.embed1:addField("Gems", gems, true)
+    webhookClient.embed1:addField("Ping", ping, true)
+    webhookClient.embed1:addField("Slot Tas (Isi/Kosong)", string.format("%s (Sisa %s)", slots, emptySlots), true)
+    webhookClient.embed1:addField("Item Pack di Tas", packItemStr, false)
 
     if webhookClient.message_id and webhookClient.message_id ~= "" then
         webhookClient:edit()
@@ -152,6 +163,51 @@ local function recoverIfAtWhiteDoor(dest)
 end
 
 -- ========================================================
+-- SMART DROP: Auto geser kanan jika tile penuh (max 20 objek / 4000 item)
+-- ========================================================
+local function smartDrop(itemId, count, startX, startY, delayDrop)
+    local curX = startX or bot.x
+    local curY = startY or bot.y
+    local world = bot:getWorld()
+    local maxWorldX = world and (world.x - 2) or 98
+    local delayFPDrop = delayDrop or 1000
+
+    while waitOnline() do
+        local inv = bot:getInventory()
+        local before = inv:findItem(itemId)
+        if before == 0 or count <= 0 then break end
+
+        local toDrop = math.min(count, before)
+
+        if not bot:isInTile(curX, curY) then
+            bot:findPath(curX, curY)
+            sleep(400)
+        end
+
+        bot:fastDrop(itemId, toDrop)
+        sleep(delayFPDrop)
+
+        local after = bot:getInventory():findItem(itemId)
+        if after < before then
+            local dropped = before - after
+            count = count - dropped
+            print(string.format("[Storage] Sukses drop %d unit item [ID %d] di (%d, %d). Sisa perlu drop: %d", dropped, itemId, curX, curY, count))
+            if count <= 0 or after == 0 then
+                break
+            end
+        else
+            -- Drop gagal atau tile sudah penuh (mencapai batas 20 floating objects / 4000 item)
+            print(string.format("[Storage] Tile (%d, %d) penuh/gagal drop! Geser 1 tile ke kanan...", curX, curY))
+            curX = curX + 1
+            if curX > maxWorldX then
+                print("[Storage] Peringatan: Mencapai batas kanan world saat drop!")
+                break
+            end
+        end
+    end
+end
+
+-- ========================================================
 -- STATE HANDLERS
 -- ========================================================
 local function doHarvest(dest)
@@ -168,8 +224,15 @@ local function doHarvest(dest)
         if not waitOnline() then return STATE.HARVEST end
         recoverIfAtWhiteDoor(dest)
 
-        if bot:getInventory().emptyslots <= 1 or harvested >= (CONFIG.BATCH_LIMIT or 20) then
+        local inv = bot:getInventory()
+        -- Aturan Growtopia: Kapasitas per item max 200. Jika blok >= 190, wajib pulang ke home untuk break
+        if inv:findItem(CONFIG.BLOCK_ID) >= 190 or inv.emptyslots <= 1 then
             return STATE.BREAK_HOME
+        end
+
+        -- Jika seed > 190, drop 100 ke storage dan sisakan sisanya untuk plant
+        if inv:findItem(CONFIG.SEED_ID) > 190 then
+            return STATE.STORE
         end
 
         if tile:canHarvest() and bot:findPath(tile.x, tile.y) then
@@ -236,6 +299,7 @@ local function doBreakHome(dest)
 
     local maxHits = CONFIG.PUNCH_RETRY_MAX or 15
 
+    -- Pecahkan sampai habis seluruh blok di tas
     while waitOnline() and bot:getInventory():findItem(CONFIG.BLOCK_ID) > 0 do
         if isAtWhiteDoor() then
             print("[Alert] Respawn ke White Door saat break! Kembali ke posisi kerja...")
@@ -317,60 +381,67 @@ end
 
 local function doStore(dest)
     local farmName = type(dest) == "table" and dest.world or dest
-    local minSeed = CONFIG.STORE_SEED_MIN or 100
-    local seeds = bot:getInventory():findItem(CONFIG.SEED_ID)
-
+    local inv = bot:getInventory()
+    local seeds = inv:findItem(CONFIG.SEED_ID)
     local packCfg = CONFIG.AUTO_BUY_PACK
+
     local hasPackItems = false
     if packCfg and packCfg.ENABLED and packCfg.ItemIDOfPack then
-        local inv = bot:getInventory()
         for _, id in ipairs(packCfg.ItemIDOfPack) do
-            if inv and inv:findItem(id) > 0 then
+            if inv:findItem(id) > 0 then
                 hasPackItems = true
                 break
             end
         end
     end
 
-    if seeds >= minSeed or hasPackItems then
+    local seedOver190 = (seeds > 190)
+    local needStoreSeed = seedOver190 or (seeds >= (CONFIG.STORE_SEED_MIN or 100))
+
+    if needStoreSeed or hasPackItems then
         updateWebhook("Menyimpan Seed & Drop Item Pack ke Storage", farmName)
         if warp(CONFIG.STORAGE) then
-            -- 1. Drop Seed
-            if seeds >= minSeed then
-                print(string.format("[Storage] Menyimpan %d seed ke storage...", seeds))
-                bot:fastDrop(CONFIG.SEED_ID, seeds)
-                sleep(1000)
+            local sx, sy = bot.x, bot.y
+
+            -- 1. Drop Seed: jika > 190, drop 100 dan sisakan sisanya untuk di-plant
+            if needStoreSeed then
+                local dropCount = seedOver190 and 100 or seeds
+                print(string.format("[Storage] Menyimpan %d seed ke storage (sisa di tas: %d)...", dropCount, seeds - dropCount))
+                smartDrop(CONFIG.SEED_ID, dropCount, sx, sy, 1000)
             end
 
-            -- 2. Drop Item Hasil Beli Pack
+            -- 2. Drop Item Hasil Beli Pack dengan auto-geser ke kanan jika tile penuh
             if hasPackItems and packCfg then
+                local px, py = sx, sy
                 if packCfg.DropPlacement then
-                    local dx, dy
                     if type(packCfg.DropPlacement) == "table" then
-                        dx, dy = packCfg.DropPlacement.x, packCfg.DropPlacement.y
+                        px, py = packCfg.DropPlacement.x, packCfg.DropPlacement.y
                     elseif type(packCfg.DropPlacement) == "number" and packCfg.DropPlacement > 100 then
-                        dx = packCfg.DropPlacement % 100
-                        dy = math.floor(packCfg.DropPlacement / 100)
-                    end
-
-                    if dx and dy and bot:getWorld():isValidTile(dx, dy) then
-                        print(string.format("[Storage] Menuju lokasi DropPlacement (%d, %d)...", dx, dy))
-                        bot:findPath(dx, dy)
-                        sleep(packCfg.DelayDrop or 2000)
+                        px = packCfg.DropPlacement % 100
+                        py = math.floor(packCfg.DropPlacement / 100)
                     end
                 end
 
-                local delayFPDrop = packCfg.DelayFPDrop or 1000
+                local delayFP = packCfg.DelayFPDrop or 1000
                 for _, itemId in ipairs(packCfg.ItemIDOfPack) do
                     local count = bot:getInventory():findItem(itemId)
                     if count > 0 then
                         print(string.format("[Storage] Menjatuhkan %d unit item [ID %d]...", count, itemId))
-                        bot:fastDrop(itemId, count)
-                        sleep(delayFPDrop)
+                        smartDrop(itemId, count, px, py, delayFP)
                     end
                 end
             end
         end
+    end
+
+    -- Jika tas masih penuh blok (>= 190), kembali ke home untuk break sampai tuntas
+    if bot:getInventory():findItem(CONFIG.BLOCK_ID) >= 190 then
+        return STATE.BREAK_HOME
+    end
+
+    -- Jika ada sisa seed untuk ditanam, lanjutkan plant
+    if bot:getInventory():findItem(CONFIG.SEED_ID) > 0 then
+        return STATE.PLANT
     end
 
     return STATE.HARVEST
