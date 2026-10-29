@@ -285,7 +285,8 @@ local function doHarvest(dest)
                 if not waitOnline() or bot:getInventory():findItem(CONFIG.SEED_ID) == 0 then break end
                 recoverIfAtWhiteDoor(dest)
 
-                if tile.fg == 0 and tile.bg ~= 0 and bot:findPath(tile.x, tile.y) then
+                local ground = world:getTile(tile.x, tile.y + 1)
+                if tile.fg == 0 and ground and ground.fg ~= 0 and ground.fg ~= 6 and bot:findPath(tile.x, tile.y) then
                     bot:place(tile.x, tile.y, CONFIG.SEED_ID)
                     sleep(160)
                     planted = planted + 1
@@ -577,7 +578,8 @@ local function doPlant(dest)
             if not waitOnline() or bot:getInventory():findItem(CONFIG.SEED_ID) == 0 then break end
             recoverIfAtWhiteDoor(dest)
 
-            if tile.fg == 0 and tile.bg ~= 0 and bot:findPath(tile.x, tile.y) then
+            local ground = world:getTile(tile.x, tile.y + 1)
+            if tile.fg == 0 and ground and ground.fg ~= 0 and ground.fg ~= 6 and bot:findPath(tile.x, tile.y) then
                 bot:place(tile.x, tile.y, CONFIG.SEED_ID)
                 sleep(160)
                 foundEmpty = true
