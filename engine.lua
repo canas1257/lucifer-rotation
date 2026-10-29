@@ -245,21 +245,21 @@ local function doHarvest(dest)
     return (harvested > 0 or bot:getInventory():findItem(CONFIG.BLOCK_ID) > 0) and STATE.BREAK_HOME or STATE.NEXT_WORLD
 end
 
--- Mencari spot berdiri di Home World dengan 3 tile kosong di kiri-atas (x, y-1), (x-1, y-1), (x-2, y-1)
+-- Mencari spot berdiri di Home World dengan 3 tile kosong di atas (x, y-1), (x-1, y-1), (x+1, y-1)
 local function findBreakSpot()
     local world = bot:getWorld()
     if not world then return bot.x, bot.y end
 
     for _, tile in ipairs(world:getTilesSafe()) do
         local sx, sy = tile.x, tile.y
-        -- Pastikan sx >= 3 agar sx - 2 tidak keluar batas kiri world, dan sy >= 2
-        if sx >= 3 and sx <= (world.x - 3) and sy >= 2 and sy <= (world.y - 3) then
+        -- Pastikan sx >= 2 dan sx <= world.x - 2 agar sx-1 dan sx+1 dalam batas world
+        if sx >= 2 and sx <= (world.x - 2) and sy >= 2 and sy <= (world.y - 3) then
             if tile.fg == 0 and tile.fg ~= 6 then
                 local ground = world:getTile(sx, sy + 1)
                 if ground and ground.fg ~= 0 and ground.fg ~= 6 then
                     local t1 = world:getTile(sx, sy - 1)
                     local t2 = world:getTile(sx - 1, sy - 1)
-                    local t3 = world:getTile(sx - 2, sy - 1)
+                    local t3 = world:getTile(sx + 1, sy - 1)
                     if t1 and t1.fg == 0 and t2 and t2.fg == 0 and t3 and t3.fg == 0 then
                         if bot:findPath(sx, sy) then
                             return sx, sy
@@ -278,23 +278,25 @@ local function doBreakHome(dest)
     local blocks = bot:getInventory():findItem(CONFIG.BLOCK_ID)
     if blocks == 0 then return STATE.PLANT end
 
-    updateWebhook("Memecahkan Blok di Home (3 Blok Atas-Kiri)", farmName)
+    updateWebhook("Memecahkan Blok di Home (3 Blok Atas Simetris)", farmName)
     if not warp(CONFIG.HOME) then return STATE.BREAK_HOME end
 
-    print("[Home] Auto-scan spot 3 blok di atas-kiri bot...")
+    print("[Home] Auto-scan spot 3 blok di atas kepala (kiri, tengah, kanan)...")
     local standX, standY = findBreakSpot()
     print(string.format("[Home] Spot terpilih: Berdiri (%d, %d) | Target Break: (%d, %d), (%d, %d), (%d, %d)",
-        standX, standY, standX, standY - 1, standX - 1, standY - 1, standX - 2, standY - 1))
+        standX, standY, standX, standY - 1, standX - 1, standY - 1, standX + 1, standY - 1))
 
     bot:findPath(standX, standY)
     sleep(400)
 
     -- Formasi 3 blok persis sesuai instruksi Bos Anas:
-    -- (standX, standY - 1), (standX - 1, standY - 1), (standX - 2, standY - 1)
+    -- Target 1: (standX, standY - 1) (Atas kepala)
+    -- Target 2: (standX - 1, standY - 1) (Atas-kiri 1)
+    -- Target 3: (standX + 1, standY - 1) (Atas-kanan 1)
     local targetOffsets = {
         { dx = 0, dy = -1 },
         { dx = -1, dy = -1 },
-        { dx = -2, dy = -1 },
+        { dx = 1, dy = -1 },
     }
     local maxHits = CONFIG.PUNCH_RETRY_MAX or 15
     local placeDelay = (intervals.place or 0.16) * 1000
