@@ -122,7 +122,7 @@ local function isAtWhiteDoor()
 end
 
 local function warp(dest)
-    bot.auto_collect = false -- Matikan auto_collect setiap kali mau berpindah world
+    bot.auto_collect = false -- Matikan auto_collect setiap kali berpindah world
     local world = type(dest) == "table" and dest.world or dest
     local door = type(dest) == "table" and (dest.door or "") or ""
 
@@ -164,14 +164,23 @@ local function recoverIfAtWhiteDoor(dest)
 end
 
 -- ========================================================
--- SMART DROP: Auto geser kanan jika tile penuh (max 20 objek / 4000 item)
+-- SMART DROP: Mencegah drop di White Door & Auto-geser ke kanan
 -- ========================================================
 local function smartDrop(itemId, count, startX, startY, delayDrop)
+    local world = bot:getWorld()
+    if not world then return end
+
     local curX = startX or bot.x
     local curY = startY or bot.y
-    local world = bot:getWorld()
-    local maxWorldX = world and (world.x - 2) or 98
+    local maxWorldX = world.x - 2
     local delayFPDrop = delayDrop or 1000
+
+    -- KRUSIAL: Server Growtopia memblokir drop di White Door (Exit / ID 6)!
+    local curTile = world:getTile(curX, curY)
+    if not curTile or curTile.fg == 6 then
+        print("[Storage] Posisi target adalah White Door (Exit). Menjauh dari pintu...")
+        curX = curX + 1
+    end
 
     while waitOnline() do
         local inv = bot:getInventory()
@@ -182,10 +191,19 @@ local function smartDrop(itemId, count, startX, startY, delayDrop)
 
         if not bot:isInTile(curX, curY) then
             bot:findPath(curX, curY)
-            sleep(400)
+            sleep(500)
+        end
+
+        -- Pastikan bot tidak berada di White Door saat melakukan drop
+        if isAtWhiteDoor() then
+            print("[Storage] Bot masih di White Door! Melangkah ke samping...")
+            curX = curX + 1
+            bot:findPath(curX, curY)
+            sleep(500)
         end
 
         bot:fastDrop(itemId, toDrop)
+        bot:drop(itemId, toDrop) -- Fallback standard drop
         sleep(delayFPDrop)
 
         local after = bot:getInventory():findItem(itemId)
@@ -229,7 +247,6 @@ local function collectFloatingObjects(dest)
                 break
             end
 
-            -- Posisi NetObject dalam pixel, konversi ke tile
             local tx = math.floor(obj.x / 32)
             local ty = math.floor(obj.y / 32)
 
@@ -254,10 +271,10 @@ local function doHarvest(dest)
     local world = bot:getWorld()
     if not world then return STATE.HARVEST end
 
-    -- 1. Cek & ambil objek tercecer (Block / Seed) saat pertama masuk world
+    -- 1. Ambil objek tercecer di farm
     collectFloatingObjects(dest)
 
-    -- 2. Tanam seluruh seed yang ada di tas sampai tidak ada lahan kosong lagi
+    -- 2. Tanam seluruh seed di tas sampai lahan kosong benar-benar habis
     local initialSeeds = bot:getInventory():findItem(CONFIG.SEED_ID)
     if initialSeeds > 0 then
         print(string.format("[Farm] Ditemukan %d seed di tas. Menanam sampai tidak ada tempat kosong...", initialSeeds))
@@ -276,9 +293,8 @@ local function doHarvest(dest)
                 end
             end
 
-            -- Jika sudah dicek seluruh world dan tidak ada tempat kosong lagi, lanjut ke harvest
             if not foundEmptySpot then
-                print(string.format("[Farm] Lahan kosong habis (tertanam %d seed). Sisa di tas: %d. Melanjutkan ke proses harvest...",
+                print(string.format("[Farm] Lahan kosong habis (tertanam %d seed). Sisa di tas: %d. Lanjut ke proses harvest...",
                     planted, bot:getInventory():findItem(CONFIG.SEED_ID)))
                 break
             end
@@ -292,12 +308,10 @@ local function doHarvest(dest)
         recoverIfAtWhiteDoor(dest)
 
         local inv = bot:getInventory()
-        -- Aturan Growtopia: Kapasitas per item max 200. Jika blok >= 190, wajib pulang ke home untuk break
-        if inv:findItem(CONFIG.BLOCK_ID) >= 190 or (inv:findItem(CONFIG.BLOCK_ID) == 0 and inv.emptyslots == 0) then
+        if inv:findItem(CONFIG.BLOCK_ID) >= maxBlocks or (inv:findItem(CONFIG.BLOCK_ID) == 0 and inv.emptyslots == 0) then
             return STATE.BREAK_HOME
         end
 
-        -- Jika seed > 190, drop 100 ke storage dan sisakan sisanya untuk plant
         if inv:findItem(CONFIG.SEED_ID) > 190 then
             return STATE.STORE
         end
@@ -310,20 +324,16 @@ local function doHarvest(dest)
         end
     end
 
-    -- Ambil objek tercecer setelah panen
     collectFloatingObjects(dest)
-
     return (harvested > 0 or bot:getInventory():findItem(CONFIG.BLOCK_ID) > 0) and STATE.BREAK_HOME or STATE.NEXT_WORLD
 end
 
--- Mencari spot berdiri di Home World dengan 3 tile kosong di atas (x, y-1), (x-1, y-1), (x+1, y-1)
 local function findBreakSpot()
     local world = bot:getWorld()
     if not world then return bot.x, bot.y end
 
     for _, tile in ipairs(world:getTilesSafe()) do
         local sx, sy = tile.x, tile.y
-        -- Pastikan sx >= 2 dan sx <= world.x - 2 agar sx-1 dan sx+1 dalam batas world
         if sx >= 2 and sx <= (world.x - 2) and sy >= 2 and sy <= (world.y - 3) then
             if tile.fg == 0 and tile.fg ~= 6 then
                 local ground = world:getTile(sx, sy + 1)
@@ -360,13 +370,8 @@ local function doBreakHome(dest)
     bot:findPath(standX, standY)
     sleep(400)
 
-    -- Aktifkan auto_collect saat mau memecahkan blok di Home
     bot.auto_collect = true
 
-    -- Formasi 3 blok persis sesuai instruksi Bos Anas:
-    -- Target 1: (standX, standY - 1) (Atas kepala)
-    -- Target 2: (standX - 1, standY - 1) (Atas-kiri 1)
-    -- Target 3: (standX + 1, standY - 1) (Atas-kanan 1)
     local targetOffsets = {
         { dx = 0, dy = -1 },
         { dx = -1, dy = -1 },
@@ -376,7 +381,6 @@ local function doBreakHome(dest)
     local placeDelay = (intervals.place or 0.16) * 1000
     local hitDelay = (intervals.hit or 0.18) * 1000
 
-    -- Tetap berada di Home sampai seluruh blok di tas BENAR-BENAR HABIS (0)
     while waitOnline() do
         local inv = bot:getInventory()
         if not inv or inv:findItem(CONFIG.BLOCK_ID) == 0 then
@@ -398,7 +402,7 @@ local function doBreakHome(dest)
         local world = bot:getWorld()
         if not world then break end
 
-        -- 1. Letakkan hingga 3 blok di (x, y-1), (x-1, y-1), (x-2, y-1)
+        -- 1. Letakkan hingga 3 blok
         for _, off in ipairs(targetOffsets) do
             local tx = standX + off.dx
             local ty = standY + off.dy
@@ -409,7 +413,7 @@ local function doBreakHome(dest)
             end
         end
 
-        -- 2. Pukul ketiga blok sampai semuanya hancur
+        -- 2. Pukul ketiga blok sampai hancur
         local totalHits = 0
         while waitOnline() and totalHits < (maxHits * 3) do
             if isAtWhiteDoor() then break end
@@ -431,25 +435,32 @@ local function doBreakHome(dest)
         end
         bot:collect(3)
 
-        -- 3. Cek overflow seed saat break (> 190 drop 100 ke storage lalu kembali ke Home)
+        -- 3. Cek overflow seed saat break (> 190 drop 100 ke storage)
         if bot:getInventory():findItem(CONFIG.SEED_ID) > 190 then
-            bot.auto_collect = false -- Matikan auto_collect saat mau keluar ke storage
+            bot.auto_collect = false
             print(string.format("[Home] Seed di tas mencapai %d (> 190). Menyimpan 100 seed ke storage...", bot:getInventory():findItem(CONFIG.SEED_ID)))
             updateWebhook("Menyimpan 100 Seed ke Storage (Tas Penuh)", farmName)
             if warp(CONFIG.STORAGE) then
-                smartDrop(CONFIG.SEED_ID, 100, bot.x, bot.y, 1000)
+                local dropX = bot.x + 1
+                local dropY = bot.y
+                local packCfg = CONFIG.AUTO_BUY_PACK
+                if packCfg and packCfg.DropPlacement and type(packCfg.DropPlacement) == "number" and packCfg.DropPlacement > 100 then
+                    dropX = packCfg.DropPlacement % 100
+                    dropY = math.floor(packCfg.DropPlacement / 100)
+                end
+
+                smartDrop(CONFIG.SEED_ID, 100, dropX, dropY, 1000)
             end
             warp(CONFIG.HOME)
             bot:findPath(standX, standY)
             sleep(400)
-            bot.auto_collect = true -- Aktifkan kembali saat kembali memecah blok
+            bot.auto_collect = true
         end
     end
 
-    -- Matikan auto_collect saat selesai break di Home sebelum pindah world
     bot.auto_collect = false
 
-    -- 4. Cek Gems langsung di Home tanpa keluar world
+    -- 4. Cek Gems di Home
     print("[Info] Gems saat ini: " .. bot.gem_count)
 
     local packCfg = CONFIG.AUTO_BUY_PACK
@@ -510,7 +521,12 @@ local function doStore(dest)
     if needStoreSeed or hasPackItems then
         updateWebhook("Menyimpan Seed & Drop Item Pack ke Storage", farmName)
         if warp(CONFIG.STORAGE) then
-            local sx, sy = bot.x, bot.y
+            local sx = bot.x + 1
+            local sy = bot.y
+            if packCfg and packCfg.DropPlacement and type(packCfg.DropPlacement) == "number" and packCfg.DropPlacement > 100 then
+                sx = packCfg.DropPlacement % 100
+                sy = math.floor(packCfg.DropPlacement / 100)
+            end
 
             -- 1. Drop Seed: jika > 190, drop 100 dan sisakan sisanya untuk di-plant
             if needStoreSeed then
@@ -519,24 +535,14 @@ local function doStore(dest)
                 smartDrop(CONFIG.SEED_ID, dropCount, sx, sy, 1000)
             end
 
-            -- 2. Drop Item Hasil Beli Pack dengan auto-geser ke kanan jika tile penuh
+            -- 2. Drop Item Hasil Beli Pack
             if hasPackItems and packCfg then
-                local px, py = sx, sy
-                if packCfg.DropPlacement then
-                    if type(packCfg.DropPlacement) == "table" then
-                        px, py = packCfg.DropPlacement.x, packCfg.DropPlacement.y
-                    elseif type(packCfg.DropPlacement) == "number" and packCfg.DropPlacement > 100 then
-                        px = packCfg.DropPlacement % 100
-                        py = math.floor(packCfg.DropPlacement / 100)
-                    end
-                end
-
                 local delayFP = packCfg.DelayFPDrop or 1000
                 for _, itemId in ipairs(packCfg.ItemIDOfPack) do
                     local count = bot:getInventory():findItem(itemId)
                     if count > 0 then
                         print(string.format("[Storage] Menjatuhkan %d unit item [ID %d]...", count, itemId))
-                        smartDrop(itemId, count, px, py, delayFP)
+                        smartDrop(itemId, count, sx, sy, delayFP)
                     end
                 end
             end
@@ -562,7 +568,6 @@ local function doPlant(dest)
     local world = bot:getWorld()
     if not world then return STATE.PLANT end
 
-    -- Ambil objek tercecer di world farm
     collectFloatingObjects(dest)
 
     print(string.format("[Plant] Memulai penanaman seed (tersedia %d seed di tas)...", seeds))
@@ -598,7 +603,6 @@ updateWebhook("Engine Dimulai", "-")
 for _, currentFarm in ipairs(CONFIG.FARMS) do
     local farmName = type(currentFarm) == "table" and currentFarm.world or currentFarm
     print("[Engine] Memulai farm: " .. farmName)
-    -- Jika di tas sudah ada seed saat awal start farm, langsung prioritaskan tanam (PLANT)
     local currentState = (bot:getInventory():findItem(CONFIG.SEED_ID) > 0) and STATE.PLANT or STATE.HARVEST
 
     while waitOnline() do
