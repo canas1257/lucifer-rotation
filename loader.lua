@@ -20,6 +20,9 @@ local CONFIG = {
     -- World storage untuk menyimpan seed & hasil item pack
     STORAGE = { world = "MYSTORE", door = "" },
 
+    -- World untuk mengambil Pickaxe jika belum ada di tas saat start
+    PICKAXE_WORLD = { world = "WORLDPICK", door = "" },
+
     -- ID Item Target
     BLOCK_ID = 4584,       -- Contoh: Pepper Tree Block
     SEED_ID = 4585,        -- Contoh: Pepper Tree Seed

@@ -350,6 +350,85 @@ local function doAutoTrash(farmName)
 end
 
 -- ========================================================
+-- AUTO TAKE & EQUIP PICKAXE (ID 98) SAAT START
+-- ========================================================
+local function checkAndEquipPickaxe()
+    local pickWorld = CONFIG.PICKAXE_WORLD
+    local inv = bot:getInventory()
+    local pickCount = inv and inv:findItem(98) or 0
+
+    -- Jika bot sudah punya Pickaxe di tas
+    if pickCount > 0 then
+        local item = inv:getItem(98)
+        if item and not item.isActive then
+            print("[Pickaxe] Memakai Pickaxe (ID 98) yang ada di tas...")
+            bot:use(98)
+            sleep(500)
+        end
+        return
+    end
+
+    -- Jika belum ada Pickaxe dan world pickaxe dikonfigurasi
+    if not (pickWorld and pickWorld.world and pickWorld.world ~= "") then
+        print("[Pickaxe] Peringatan: Bot belum punya Pickaxe (98) dan CONFIG.PICKAXE_WORLD belum diisi.")
+        return
+    end
+
+    print("[Pickaxe] Pickaxe (98) tidak ditemukan di tas! Menuju world pickaxe: " .. tostring(pickWorld.world))
+    updateWebhook("Mengambil Pickaxe di World Storage", "-")
+
+    if not warp(pickWorld) then
+        print("[Pickaxe] Gagal warp ke world pickaxe!")
+        return
+    end
+
+    local world = bot:getWorld()
+    if not world then return end
+
+    -- Scan seluruh NetObject di world untuk mencari objek Pickaxe (ID 98)
+    local objects = world:getObjects()
+    local foundPickaxe = false
+
+    if objects then
+        for _, obj in ipairs(objects) do
+            if obj.id == 98 then
+                local tx = math.floor(obj.x / 32)
+                local ty = math.floor(obj.y / 32)
+                print(string.format("[Pickaxe] Objek Pickaxe ditemukan di koordinat (%d, %d). Menuju ke lokasi...", tx, ty))
+
+                if world:isValidTile(tx, ty) and bot:findPath(tx, ty) then
+                    bot:collect(3)
+                    sleep(1000)
+                    foundPickaxe = true
+                    break
+                end
+            end
+        end
+    end
+
+    if not foundPickaxe then
+        print("[Pickaxe] Peringatan: Tidak ada objek Pickaxe (ID 98) tercecer di world ini!")
+    end
+
+    -- Cek jumlah pickaxe di tas: taruh kembali kelebihannya agar HANYA tersisa 1 di tas (jumlah - 1)
+    local currentPicks = bot:getInventory():findItem(98)
+    if currentPicks > 1 then
+        local toDropBack = currentPicks - 1
+        print(string.format("[Pickaxe] Tas terisi %d pickaxe. Menaruh kembali %d buah ke lantai agar tersisa 1...", currentPicks, toDropBack))
+        bot:fastDrop(98, toDropBack)
+        sleep(1000)
+    end
+
+    -- Use / wear pickaxe agar aktif di tangan
+    if bot:getInventory():findItem(98) > 0 then
+        print("[Pickaxe] Memakai Pickaxe (ID 98)...")
+        bot:use(98)
+        sleep(500)
+        print("[Pickaxe] Pickaxe aktif di tangan dan bot siap bekerja!")
+    end
+end
+
+-- ========================================================
 -- STATE HANDLERS
 -- ========================================================
 local function doHarvest(dest)
@@ -585,11 +664,47 @@ local function doBuyPack(dest)
             print(string.format("[AutoBuy] Memulai beli pack '%s' (Gems: %d | Harga: %d)", packCfg.PackName, bot.gem_count, price))
 
             local delayBuy = packCfg.DelayBuyPack or 1500
+            local boughtCount = 0
             while waitOnline() and bot.gem_count >= price do
                 bot:buy(packCfg.PackName)
+                boughtCount = boughtCount + 1
                 sleep(delayBuy)
             end
-            print("[AutoBuy] Selesai beli pack. Sisa gems: " .. bot.gem_count)
+            print(string.format("[AutoBuy] Selesai beli %d pack. Sisa gems: %d", boughtCount, bot.gem_count))
+
+            -- Sesuai arahan Bos Anas: Begitu selesai beli pack, LANGSUNG drop item pack ke world storage detik itu juga!
+            local hasPackItems = false
+            local inv = bot:getInventory()
+            if packCfg.ItemIDOfPack and inv then
+                for _, id in ipairs(packCfg.ItemIDOfPack) do
+                    if inv:findItem(id) > 0 then
+                        hasPackItems = true
+                        break
+                    end
+                end
+            end
+
+            if boughtCount > 0 or hasPackItems then
+                print("[AutoBuy] Langsung menuju world storage untuk drop item pack...")
+                updateWebhook("Drop Item Pack ke Storage", farmName)
+                if warp(CONFIG.STORAGE) then
+                    local sx = bot.x + 1
+                    local sy = bot.y
+                    if packCfg.DropPlacement and type(packCfg.DropPlacement) == "number" and packCfg.DropPlacement > 100 then
+                        sx = packCfg.DropPlacement % 100
+                        sy = math.floor(packCfg.DropPlacement / 100)
+                    end
+
+                    local delayFP = packCfg.DelayFPDrop or 1000
+                    for _, itemId in ipairs(packCfg.ItemIDOfPack) do
+                        local count = bot:getInventory():findItem(itemId)
+                        if count > 0 then
+                            print(string.format("[Storage] Menjatuhkan %d unit item pack [ID %d]...", count, itemId))
+                            smartDrop(itemId, count, sx, sy, delayFP)
+                        end
+                    end
+                end
+            end
         end
     end
 
@@ -700,6 +815,9 @@ end
 -- ========================================================
 print("[Engine] Memulai eksekusi rotasi Lucifer v2.86...")
 updateWebhook("Engine Dimulai", "-")
+
+-- 1. Pengecekan & Pengambilan Pickaxe otomatis saat start
+checkAndEquipPickaxe()
 
 for _, currentFarm in ipairs(CONFIG.FARMS) do
     local farmName = type(currentFarm) == "table" and currentFarm.world or currentFarm
