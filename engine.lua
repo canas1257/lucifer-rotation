@@ -185,17 +185,12 @@ local function reconnectGuard(dest, targetX, targetY)
             sleep(600)
         end
 
-        -- Berjalan kembali ke koordinat target (x, y)
+        -- Berjalan kembali ke koordinat target (x, y) hanya saat pemulihan dari White Door
         if targetX and targetY and bot:getWorld() and bot:getWorld():isValidTile(targetX, targetY) then
             print(string.format("[Guard] Berjalan dari White Door kembali ke posisi target (%d, %d)...", targetX, targetY))
             bot:findPath(targetX, targetY)
             sleep(400)
         end
-    end
-
-    -- 4. Pastikan bot berada di targetX, targetY jika diberikan
-    if targetX and targetY and not bot:isInTile(targetX, targetY) and bot:getWorld() and bot:getWorld():isValidTile(targetX, targetY) then
-        bot:findPath(targetX, targetY)
     end
 end
 
