@@ -362,8 +362,8 @@ local function checkAndEquipPickaxe()
     if pickCount > 0 then
         local item = inv:getItem(98)
         if item and not item.isActive then
-            print("[Pickaxe] Memakai Pickaxe (ID 98) yang ada di tas...")
-            bot:use(98)
+            print("[Pickaxe] Memakai Pickaxe (ID 98) via bot:wear()...")
+            bot:wear(98)
             sleep(500)
         end
         return
@@ -427,10 +427,10 @@ local function checkAndEquipPickaxe()
         sleep(1000)
     end
 
-    -- Use / wear pickaxe agar aktif di tangan
+    -- Wear pickaxe agar aktif di tangan
     if bot:getInventory():findItem(98) > 0 then
-        print("[Pickaxe] Memakai Pickaxe (ID 98)...")
-        bot:use(98)
+        print("[Pickaxe] Memakai Pickaxe (ID 98) via bot:wear()...")
+        bot:wear(98)
         sleep(500)
         print("[Pickaxe] Pickaxe aktif di tangan dan bot siap bekerja!")
     end
