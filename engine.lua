@@ -183,6 +183,42 @@ local function doHarvest(dest)
     return harvested > 0 and STATE.BREAK_HOME or STATE.NEXT_WORLD
 end
 
+-- Mencari spot kosong untuk berdiri dan memecahkan blok di Home World
+local function findBreakSpot()
+    local world = bot:getWorld()
+    if not world then return bot.x, bot.y, bot.x + 1, bot.y end
+
+    for _, tile in ipairs(world:getTilesSafe()) do
+        local sx, sy = tile.x, tile.y
+        if sx >= 2 and sx <= (world.x - 3) and sy >= 2 and sy <= (world.y - 3) then
+            if tile.fg == 0 and tile.fg ~= 6 then
+                local ground = world:getTile(sx, sy + 1)
+                if ground and ground.fg ~= 0 and ground.fg ~= 6 then
+                    -- Cek spot break di sisi kanan
+                    local rightTile = world:getTile(sx + 1, sy)
+                    local rightGround = world:getTile(sx + 1, sy + 1)
+                    if rightTile and rightTile.fg == 0 and rightGround and rightGround.fg ~= 0 then
+                        if bot:findPath(sx, sy) then
+                            return sx, sy, sx + 1, sy
+                        end
+                    end
+
+                    -- Cek spot break di sisi kiri
+                    local leftTile = world:getTile(sx - 1, sy)
+                    local leftGround = world:getTile(sx - 1, sy + 1)
+                    if leftTile and leftTile.fg == 0 and leftGround and leftGround.fg ~= 0 then
+                        if bot:findPath(sx, sy) then
+                            return sx, sy, sx - 1, sy
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    return bot.x, bot.y, bot.x + 1, bot.y
+end
+
 local function doBreakHome(dest)
     local farmName = type(dest) == "table" and dest.world or dest
     local blocks = bot:getInventory():findItem(CONFIG.BLOCK_ID)
@@ -191,13 +227,19 @@ local function doBreakHome(dest)
     updateWebhook("Memecahkan Blok di Home", farmName)
     if not warp(CONFIG.HOME) then return STATE.BREAK_HOME end
 
-    local bx, by = bot.x + 1, bot.y
+    print("[Home] Melakukan auto-scan spot kosong untuk memecah blok...")
+    local standX, standY, bx, by = findBreakSpot()
+    print(string.format("[Home] Spot terpilih: Berdiri (%d, %d) | Target Break (%d, %d)", standX, standY, bx, by))
+
+    bot:findPath(standX, standY)
+    sleep(400)
+
     local maxHits = CONFIG.PUNCH_RETRY_MAX or 15
 
     while waitOnline() and bot:getInventory():findItem(CONFIG.BLOCK_ID) > 0 do
         if isAtWhiteDoor() then
             print("[Alert] Respawn ke White Door saat break! Kembali ke posisi kerja...")
-            bot:findPath(bx - 1, by)
+            bot:findPath(standX, standY)
             sleep(500)
         end
 
