@@ -48,11 +48,13 @@ local client = HttpClient.new()
 client.url = RAW_ENGINE_URL
 client:setMethod(Method.get)
 client.timeout = 15
+client.headers = { ["User-Agent"] = "Lucifer" }
 
 local res = client:request()
 if res.error == 0 and res.status == 200 then
     print("[Loader] Engine berhasil diunduh. Memulai kompilasi...")
-    local chunk, err = load(res.body)
+    _G.CONFIG = CONFIG
+    local chunk, err = (loadstring or load)(res.body)
     if chunk then
         chunk(CONFIG)
     else
