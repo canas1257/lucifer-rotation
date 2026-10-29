@@ -432,7 +432,14 @@ local function findBreakSpot()
         if sx >= 2 and sx <= (world.x - 2) and sy >= 2 and sy <= (world.y - 3) then
             if tile.fg == 0 and tile.fg ~= 6 then
                 local ground = world:getTile(sx, sy + 1)
-                if ground and ground.fg ~= 0 and ground.fg ~= 6 then
+                -- Syarat lantai pijakan:
+                -- 1. Ada lantai padat (fg ~= 0) dan bukan White Door (fg ~= 6)
+                -- 2. BUKAN blok farm yang sedang di-break (ground.fg ~= CONFIG.BLOCK_ID)
+                --    agar bot tidak berdiri di atas blok farm yang tertinggal
+                -- 3. BUKAN seed (ground.fg ~= CONFIG.SEED_ID)
+                if ground and ground.fg ~= 0 and ground.fg ~= 6 
+                   and ground.fg ~= CONFIG.BLOCK_ID 
+                   and ground.fg ~= CONFIG.SEED_ID then
                     local t1 = world:getTile(sx, sy - 1)
                     local t2 = world:getTile(sx - 1, sy - 1)
                     local t3 = world:getTile(sx + 1, sy - 1)
