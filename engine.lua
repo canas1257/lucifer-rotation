@@ -207,6 +207,40 @@ local function smartDrop(itemId, count, startX, startY, delayDrop)
 end
 
 -- ========================================================
+-- COLLECT OBJEK TERCECER (BLOCK & SEED) DI WORLD
+-- ========================================================
+local function collectFloatingObjects(dest)
+    local world = bot:getWorld()
+    if not world then return end
+
+    local objects = world:getObjects()
+    if not objects or #objects == 0 then return end
+
+    local maxBlocks = CONFIG.MAX_BLOCK_BACKPACK or 190
+
+    for _, obj in ipairs(objects) do
+        if not waitOnline() then break end
+        recoverIfAtWhiteDoor(dest)
+
+        if obj.id == CONFIG.BLOCK_ID or obj.id == CONFIG.SEED_ID then
+            local inv = bot:getInventory()
+            if obj.id == CONFIG.BLOCK_ID and inv and inv:findItem(CONFIG.BLOCK_ID) >= maxBlocks then
+                break
+            end
+
+            -- Posisi NetObject dalam pixel, konversi ke tile
+            local tx = math.floor(obj.x / 32)
+            local ty = math.floor(obj.y / 32)
+
+            if world:isValidTile(tx, ty) and bot:findPath(tx, ty) then
+                bot:collect(3)
+                sleep(200)
+            end
+        end
+    end
+end
+
+-- ========================================================
 -- STATE HANDLERS
 -- ========================================================
 local function doHarvest(dest)
@@ -218,6 +252,25 @@ local function doHarvest(dest)
     local world = bot:getWorld()
     if not world then return STATE.HARVEST end
 
+    -- 1. Cek & ambil objek tercecer (Block / Seed) saat pertama masuk world
+    collectFloatingObjects(dest)
+
+    -- 2. Jika ada seed di tas, langsung cari area kosong dan tanam terlebih dahulu
+    local initialSeeds = bot:getInventory():findItem(CONFIG.SEED_ID)
+    if initialSeeds > 0 then
+        print(string.format("[Farm] Ditemukan %d seed di tas. Memprioritaskan tanam terlebih dahulu...", initialSeeds))
+        for _, tile in ipairs(world:getTilesSafe()) do
+            if not waitOnline() or bot:getInventory():findItem(CONFIG.SEED_ID) == 0 then break end
+            recoverIfAtWhiteDoor(dest)
+
+            if tile.fg == 0 and tile.bg ~= 0 and bot:findPath(tile.x, tile.y) then
+                bot:place(tile.x, tile.y, CONFIG.SEED_ID)
+                sleep(160)
+            end
+        end
+    end
+
+    local maxBlocks = CONFIG.MAX_BLOCK_BACKPACK or 190
     local harvested = 0
     for _, tile in ipairs(world:getTilesSafe()) do
         if not waitOnline() then return STATE.HARVEST end
@@ -241,6 +294,9 @@ local function doHarvest(dest)
             harvested = harvested + 1
         end
     end
+
+    -- Ambil objek tercecer setelah panen
+    collectFloatingObjects(dest)
 
     return (harvested > 0 or bot:getInventory():findItem(CONFIG.BLOCK_ID) > 0) and STATE.BREAK_HOME or STATE.NEXT_WORLD
 end
@@ -482,6 +538,9 @@ local function doPlant(dest)
     local world = bot:getWorld()
     if not world then return STATE.PLANT end
 
+    -- Ambil objek tercecer di world farm
+    collectFloatingObjects(dest)
+
     for _, tile in ipairs(world:getTilesSafe()) do
         if not waitOnline() or bot:getInventory():findItem(CONFIG.SEED_ID) == 0 then break end
         recoverIfAtWhiteDoor(dest)
@@ -492,6 +551,7 @@ local function doPlant(dest)
         end
     end
 
+    collectFloatingObjects(dest)
     return STATE.HARVEST
 end
 
@@ -504,7 +564,8 @@ updateWebhook("Engine Dimulai", "-")
 for _, currentFarm in ipairs(CONFIG.FARMS) do
     local farmName = type(currentFarm) == "table" and currentFarm.world or currentFarm
     print("[Engine] Memulai farm: " .. farmName)
-    local currentState = STATE.HARVEST
+    -- Jika di tas sudah ada seed saat awal start farm, langsung prioritaskan tanam (PLANT)
+    local currentState = (bot:getInventory():findItem(CONFIG.SEED_ID) > 0) and STATE.PLANT or STATE.HARVEST
 
     while waitOnline() do
         if currentState == STATE.HARVEST then
