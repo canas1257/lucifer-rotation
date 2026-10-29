@@ -122,6 +122,7 @@ local function isAtWhiteDoor()
 end
 
 local function warp(dest)
+    bot.auto_collect = false -- Matikan auto_collect setiap kali mau berpindah world
     local world = type(dest) == "table" and dest.world or dest
     local door = type(dest) == "table" and (dest.door or "") or ""
 
@@ -244,6 +245,7 @@ end
 -- STATE HANDLERS
 -- ========================================================
 local function doHarvest(dest)
+    bot.auto_collect = false
     local farmName = type(dest) == "table" and dest.world or dest
     updateWebhook("Memanen Pohon (Harvest)", farmName)
 
@@ -255,17 +257,30 @@ local function doHarvest(dest)
     -- 1. Cek & ambil objek tercecer (Block / Seed) saat pertama masuk world
     collectFloatingObjects(dest)
 
-    -- 2. Jika ada seed di tas, langsung cari area kosong dan tanam terlebih dahulu
+    -- 2. Tanam seluruh seed yang ada di tas sampai tidak ada lahan kosong lagi
     local initialSeeds = bot:getInventory():findItem(CONFIG.SEED_ID)
     if initialSeeds > 0 then
-        print(string.format("[Farm] Ditemukan %d seed di tas. Memprioritaskan tanam terlebih dahulu...", initialSeeds))
-        for _, tile in ipairs(world:getTilesSafe()) do
-            if not waitOnline() or bot:getInventory():findItem(CONFIG.SEED_ID) == 0 then break end
-            recoverIfAtWhiteDoor(dest)
+        print(string.format("[Farm] Ditemukan %d seed di tas. Menanam sampai tidak ada tempat kosong...", initialSeeds))
+        local planted = 0
+        while waitOnline() and bot:getInventory():findItem(CONFIG.SEED_ID) > 0 do
+            local foundEmptySpot = false
+            for _, tile in ipairs(world:getTilesSafe()) do
+                if not waitOnline() or bot:getInventory():findItem(CONFIG.SEED_ID) == 0 then break end
+                recoverIfAtWhiteDoor(dest)
 
-            if tile.fg == 0 and tile.bg ~= 0 and bot:findPath(tile.x, tile.y) then
-                bot:place(tile.x, tile.y, CONFIG.SEED_ID)
-                sleep(160)
+                if tile.fg == 0 and tile.bg ~= 0 and bot:findPath(tile.x, tile.y) then
+                    bot:place(tile.x, tile.y, CONFIG.SEED_ID)
+                    sleep(160)
+                    planted = planted + 1
+                    foundEmptySpot = true
+                end
+            end
+
+            -- Jika sudah dicek seluruh world dan tidak ada tempat kosong lagi, lanjut ke harvest
+            if not foundEmptySpot then
+                print(string.format("[Farm] Lahan kosong habis (tertanam %d seed). Sisa di tas: %d. Melanjutkan ke proses harvest...",
+                    planted, bot:getInventory():findItem(CONFIG.SEED_ID)))
+                break
             end
         end
     end
@@ -345,6 +360,9 @@ local function doBreakHome(dest)
     bot:findPath(standX, standY)
     sleep(400)
 
+    -- Aktifkan auto_collect saat mau memecahkan blok di Home
+    bot.auto_collect = true
+
     -- Formasi 3 blok persis sesuai instruksi Bos Anas:
     -- Target 1: (standX, standY - 1) (Atas kepala)
     -- Target 2: (standX - 1, standY - 1) (Atas-kiri 1)
@@ -415,6 +433,7 @@ local function doBreakHome(dest)
 
         -- 3. Cek overflow seed saat break (> 190 drop 100 ke storage lalu kembali ke Home)
         if bot:getInventory():findItem(CONFIG.SEED_ID) > 190 then
+            bot.auto_collect = false -- Matikan auto_collect saat mau keluar ke storage
             print(string.format("[Home] Seed di tas mencapai %d (> 190). Menyimpan 100 seed ke storage...", bot:getInventory():findItem(CONFIG.SEED_ID)))
             updateWebhook("Menyimpan 100 Seed ke Storage (Tas Penuh)", farmName)
             if warp(CONFIG.STORAGE) then
@@ -423,8 +442,12 @@ local function doBreakHome(dest)
             warp(CONFIG.HOME)
             bot:findPath(standX, standY)
             sleep(400)
+            bot.auto_collect = true -- Aktifkan kembali saat kembali memecah blok
         end
     end
+
+    -- Matikan auto_collect saat selesai break di Home sebelum pindah world
+    bot.auto_collect = false
 
     -- 4. Cek Gems langsung di Home tanpa keluar world
     print("[Info] Gems saat ini: " .. bot.gem_count)
@@ -528,6 +551,7 @@ local function doStore(dest)
 end
 
 local function doPlant(dest)
+    bot.auto_collect = false
     local farmName = type(dest) == "table" and dest.world or dest
     local seeds = bot:getInventory():findItem(CONFIG.SEED_ID)
     if seeds == 0 then return STATE.HARVEST end
@@ -541,13 +565,23 @@ local function doPlant(dest)
     -- Ambil objek tercecer di world farm
     collectFloatingObjects(dest)
 
-    for _, tile in ipairs(world:getTilesSafe()) do
-        if not waitOnline() or bot:getInventory():findItem(CONFIG.SEED_ID) == 0 then break end
-        recoverIfAtWhiteDoor(dest)
+    print(string.format("[Plant] Memulai penanaman seed (tersedia %d seed di tas)...", seeds))
+    while waitOnline() and bot:getInventory():findItem(CONFIG.SEED_ID) > 0 do
+        local foundEmpty = false
+        for _, tile in ipairs(world:getTilesSafe()) do
+            if not waitOnline() or bot:getInventory():findItem(CONFIG.SEED_ID) == 0 then break end
+            recoverIfAtWhiteDoor(dest)
 
-        if tile.fg == 0 and tile.bg ~= 0 and bot:findPath(tile.x, tile.y) then
-            bot:place(tile.x, tile.y, CONFIG.SEED_ID)
-            sleep(160)
+            if tile.fg == 0 and tile.bg ~= 0 and bot:findPath(tile.x, tile.y) then
+                bot:place(tile.x, tile.y, CONFIG.SEED_ID)
+                sleep(160)
+                foundEmpty = true
+            end
+        end
+
+        if not foundEmpty then
+            print("[Plant] Lahan kosong habis / tidak ada tempat lagi. Lanjut ke proses harvest...")
+            break
         end
     end
 
