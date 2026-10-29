@@ -172,10 +172,12 @@ local function doPlant(dest)
         if not waitOnline() or bot:getInventory():findItem(CONFIG.SEED_ID) == 0 then break end
         recoverIfAtWhiteDoor(dest)
 
-        local ground = world:getTile(tile.x, tile.y + 1)
-        if tile.fg == 0 and ground and ground.fg ~= 0 and ground.fg ~= 6 and bot:findPath(tile.x, tile.y) then
-            bot:place(tile.x, tile.y, CONFIG.SEED_ID)
-            sleep(160)
+        if tile.fg ~= 0 and tile.fg ~= 6 and tile.y > 0 then
+            local above = world:getTile(tile.x, tile.y - 1)
+            if above and above.fg == 0 and bot:findPath(tile.x, tile.y - 1) then
+                bot:place(tile.x, tile.y - 1, CONFIG.SEED_ID)
+                sleep(160)
+            end
         end
     end
 
