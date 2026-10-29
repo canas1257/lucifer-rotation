@@ -136,17 +136,18 @@ local function warp(dest)
     end
 
     bot:warp(world, door)
-    for _ = 1, 30 do
-        sleep(1000)
+    -- Polling setiap 500ms agar begitu subserver transfer selesai bot langsung bergerak (rata-rata 1.5 - 2.5 detik)
+    for _ = 1, 40 do
+        sleep(500)
         if bot:isInWorld(world) and bot:isInWorld() then
-            sleep(800)
+            sleep(500) -- jeda settling streaming tile
             if isAtWhiteDoor() and door ~= "" then
                 bot:warp(world, door)
-                sleep(1000)
+                sleep(600)
             end
             return true
         end
-        if not waitOnline(5) then return false end
+        if not waitOnline(3) then return false end
     end
     return false
 end
