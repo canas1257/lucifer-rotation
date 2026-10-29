@@ -152,16 +152,56 @@ local function warp(dest)
     return false
 end
 
-local function recoverIfAtWhiteDoor(dest)
-    if isAtWhiteDoor() then
-        local world = type(dest) == "table" and dest.world or dest
-        local door = type(dest) == "table" and (dest.door or "") or ""
-        print("[Alert] Terdeteksi di White Door (ID 6), re-warp ke: " .. world .. "|" .. door)
-        if door ~= "" then
-            bot:warp(world, door)
+-- ========================================================
+-- RECONNECT & POSITION GUARD (reconnect_guard / erco_connet)
+-- Menjaga bot online, auto-warp ke world terakhir saat DC, dan recovery dari White Door ke (x, y)
+-- ========================================================
+local function reconnectGuard(dest, targetX, targetY)
+    local world = type(dest) == "table" and dest.world or dest
+    local door = type(dest) == "table" and (dest.door or "") or ""
+
+    -- 1. Cek status bot online atau tidak
+    if bot.status ~= BotStatus.online then
+        print(string.format("[Guard] Bot offline (Status: %s). Menunggu online kembali...", tostring(bot.status)))
+        updateWebhook("Bot Offline / Menunggu Reconnect", world)
+
+        while not waitOnline(5) do
             sleep(1000)
         end
+        print("[Guard] Bot sudah online kembali!")
     end
+
+    -- 2. Cek apakah bot berada di world target
+    if not bot:isInWorld(world) or not bot:isInWorld() then
+        print(string.format("[Guard] Bot belum di world '%s'. Melakukan warp...", world))
+        warp({ world = world, door = door })
+    end
+
+    -- 3. Cek apakah bot berada di White Door (ID 6)
+    if isAtWhiteDoor() then
+        print(string.format("[Guard] Terdeteksi di White Door (ID 6). Re-warp ke door '%s'...", door))
+        if door ~= "" then
+            bot:warp(world, door)
+            sleep(600)
+        end
+
+        -- Berjalan kembali ke koordinat target (x, y)
+        if targetX and targetY and bot:getWorld() and bot:getWorld():isValidTile(targetX, targetY) then
+            print(string.format("[Guard] Berjalan dari White Door kembali ke posisi target (%d, %d)...", targetX, targetY))
+            bot:findPath(targetX, targetY)
+            sleep(400)
+        end
+    end
+
+    -- 4. Pastikan bot berada di targetX, targetY jika diberikan
+    if targetX and targetY and not bot:isInTile(targetX, targetY) and bot:getWorld() and bot:getWorld():isValidTile(targetX, targetY) then
+        bot:findPath(targetX, targetY)
+    end
+end
+
+-- Alias kompatibilitas
+local function recoverIfAtWhiteDoor(dest, targetX, targetY)
+    reconnectGuard(dest, targetX, targetY)
 end
 
 -- ========================================================
@@ -339,7 +379,7 @@ local function doHarvest(dest)
             local foundEmptySpot = false
             for _, tile in ipairs(world:getTilesSafe()) do
                 if not waitOnline() or bot:getInventory():findItem(CONFIG.SEED_ID) == 0 then break end
-                recoverIfAtWhiteDoor(dest)
+                reconnectGuard(dest, tile.x, tile.y - 1)
 
                 -- Cek pijakan lantai (tanah/platform padat, bukan White Door dan BUKAN seed/tanaman)
                 if tile.fg ~= 0 and tile.fg ~= 6 and tile.fg ~= CONFIG.SEED_ID and not tile:canHarvest() and tile.y > 0 then
@@ -365,7 +405,7 @@ local function doHarvest(dest)
     local harvested = 0
     for _, tile in ipairs(world:getTilesSafe()) do
         if not waitOnline() then return STATE.HARVEST end
-        recoverIfAtWhiteDoor(dest)
+        reconnectGuard(dest, tile.x, tile.y)
 
         local inv = bot:getInventory()
         if inv:findItem(CONFIG.BLOCK_ID) >= maxBlocks or (inv:findItem(CONFIG.BLOCK_ID) == 0 and inv.emptyslots == 0) then
@@ -448,16 +488,8 @@ local function doBreakHome(dest)
             break
         end
 
-        if isAtWhiteDoor() then
-            print("[Alert] Respawn ke White Door saat break! Kembali ke posisi kerja...")
-            bot:findPath(standX, standY)
-            sleep(500)
-        end
-
-        if not bot:isInTile(standX, standY) then
-            bot:findPath(standX, standY)
-            sleep(300)
-        end
+        -- Proteksi reconnect & recovery White Door langsung ke posisi kerja (standX, standY)
+        reconnectGuard(CONFIG.HOME, standX, standY)
 
         local world = bot:getWorld()
         if not world then break end
@@ -638,7 +670,7 @@ local function doPlant(dest)
         local foundEmpty = false
         for _, tile in ipairs(world:getTilesSafe()) do
             if not waitOnline() or bot:getInventory():findItem(CONFIG.SEED_ID) == 0 then break end
-            recoverIfAtWhiteDoor(dest)
+            reconnectGuard(dest, tile.x, tile.y - 1)
 
             -- Cek pijakan lantai (tanah/platform padat, bukan White Door dan BUKAN seed/tanaman)
             if tile.fg ~= 0 and tile.fg ~= 6 and tile.fg ~= CONFIG.SEED_ID and not tile:canHarvest() and tile.y > 0 then
