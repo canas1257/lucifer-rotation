@@ -627,6 +627,7 @@ local function findBreakSpot()
     local world = bot:getWorld()
     if not world then return bot.x, bot.y end
 
+    local candidates = {}
     for _, tile in ipairs(world:getTilesSafe()) do
         local sx, sy = tile.x, tile.y
         if sx >= 2 and sx <= (world.x - 2) and sy >= 2 and sy <= (world.y - 3) then
@@ -644,11 +645,24 @@ local function findBreakSpot()
                     local t2 = world:getTile(sx - 1, sy - 1)
                     local t3 = world:getTile(sx + 1, sy - 1)
                     if t1 and t1.fg == 0 and t2 and t2.fg == 0 and t3 and t3.fg == 0 then
-                        if bot:findPath(sx, sy) then
-                            return sx, sy
-                        end
+                        table.insert(candidates, { x = sx, y = sy })
                     end
                 end
+            end
+        end
+    end
+
+    -- Sesuai arahan Bos Anas: Acak urutan kandidat spot kosong agar bot memilih lokasi baru secara random
+    if #candidates > 0 then
+        math.randomseed(os.time())
+        for i = #candidates, 2, -1 do
+            local j = math.random(i)
+            candidates[i], candidates[j] = candidates[j], candidates[i]
+        end
+
+        for _, spot in ipairs(candidates) do
+            if bot:findPath(spot.x, spot.y) then
+                return spot.x, spot.y
             end
         end
     end
@@ -661,12 +675,15 @@ local function doBreakHome(dest)
     local blocks = bot:getInventory():findItem(CONFIG.BLOCK_ID)
     if blocks == 0 then return STATE.PLANT end
 
+    local homeWorld = type(CONFIG.HOME) == "table" and CONFIG.HOME.world or CONFIG.HOME
+    local homeDoor = type(CONFIG.HOME) == "table" and (CONFIG.HOME.door or "") or ""
+
     updateWebhook("Memecahkan Blok di Home (3 Blok Atas Simetris)", farmName)
     if not warp(CONFIG.HOME) then return STATE.BREAK_HOME end
 
-    print("[Home] Auto-scan spot 3 blok di atas kepala (kiri, tengah, kanan)...")
+    print("[Home] Auto-scan spot 3 blok di atas kepala (mencari lokasi kosong secara random)...")
     local targetX, targetY = findBreakSpot()
-    print(string.format("[Home] Target scan: (%d, %d). Mencoba findPath ke lokasi...", targetX, targetY))
+    print(string.format("[Home] Target scan random: (%d, %d). Mencoba findPath ke lokasi...", targetX, targetY))
 
     bot:findPath(targetX, targetY)
     sleep(400)
@@ -680,12 +697,13 @@ local function doBreakHome(dest)
         print(string.format("[Home] Sukses tiba di spot: Berdiri (%d, %d)", standX, standY))
     end
 
-    -- Jika posisi berdiri asli berada di White Door (ID 6), melangkah menjauh agar tidak terblokir sistem game
+    -- Jika posisi berdiri asli berada di White Door (ID 6), re-warp dan cari spot random baru
     if isAtWhiteDoor() then
-        print("[Home] Posisi berdiri bot di White Door (ID 6). Melangkah menjauh...")
-        if not (bot:findPath(standX + 1, standY) or bot:findPath(standX - 1, standY)) then
-            bot:moveTo(1, 0)
-        end
+        print(string.format("[Home] Terdeteksi di White Door (ID 6). Re-warp ke '%s:%s' dan scan lokasi baru...", homeWorld, homeDoor))
+        if homeDoor ~= "" then bot:warp(homeWorld, homeDoor) else bot:warp(homeWorld) end
+        sleep(600)
+        local rx, ry = findBreakSpot()
+        bot:findPath(rx, ry)
         sleep(400)
         standX, standY = bot.x, bot.y
         print(string.format("[Home] Posisi berdiri aman terbaru: (%d, %d)", standX, standY))
@@ -715,14 +733,26 @@ local function doBreakHome(dest)
         -- Selalu ambil posisi BERDIRI ASLI bot saat ini secara dinamis
         local curX, curY = bot.x, bot.y
 
-        -- Jika bot terdorong/berada di White Door, melangkah menjauh
+        -- Sesuai arahan Bos Anas: Jika bot terlempar atau berdiri di White Door (ID 6),
+        -- bot otomatis warp(world, id) dan mencari lokasi break baru secara random
         if isAtWhiteDoor() then
-            if not (bot:findPath(curX + 1, curY) or bot:findPath(curX - 1, curY)) then
-                bot:moveTo(1, 0)
+            print(string.format("[Home] Bot terlempar/berdiri di White Door (ID 6)! Otomatis re-warp ke '%s:%s'...", homeWorld, homeDoor))
+            if homeDoor ~= "" then
+                bot:warp(homeWorld, homeDoor)
+                sleep(800)
+            else
+                bot:warp(homeWorld)
+                sleep(800)
             end
-            sleep(300)
+
+            print("[Home] Memindai world kembali untuk mencari lokasi break kosong secara random...")
+            local newX, newY = findBreakSpot()
+            print(string.format("[Home] Spot break baru terpilih: (%d, %d). Berjalan ke lokasi baru...", newX, newY))
+            bot:findPath(newX, newY)
+            sleep(400)
+            standX, standY = bot.x, bot.y
             curX, curY = bot.x, bot.y
-            standX, standY = curX, curY
+            print(string.format("[Home] Melanjutkan break di posisi baru: (%d, %d)", curX, curY))
         end
 
         local world = bot:getWorld()
