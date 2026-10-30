@@ -462,7 +462,8 @@ local function isGrumbleteethEnabled()
     if CONFIG.autoMalady ~= nil and (CONFIG.malady == "Grumbleteeth" or CONFIG.malady == nil) then
         return CONFIG.autoMalady == true
     end
-    return false
+    -- Default otomatis aktif (true), jadi bot klien tidak wajib mengedit loader.lua
+    return true
 end
 
 local function ensureGrumbleteeth()
