@@ -489,14 +489,18 @@ local function ensureGrumbleteeth()
         "farming grind",
         "freezing breeze",
         "growtopia time",
-        "just chatting",
+        "just chilling",
         "brrr so cold",
+        "working hard",
+        "nice weather",
+        "let's keep going",
+        "staying active",
     }
 
-    local maxAttempts = 60 -- Maksimal ~2 menit
     local attempt = 0
+    print("[Malady] Memulai auto-chat dengan jeda 3-5 detik sekali sampai terkena Grumbleteeth...")
 
-    while waitOnline() and attempt < maxAttempts do
+    while waitOnline() do
         if hasActiveMalady() then
             print(string.format("[Malady] SUKSES! Bot telah terinfeksi Malady (ID %s). Kebal dari Torn Punching Muscle!", tostring(bot.malady or "Active")))
             print("[Malady] Melanjutkan rotasi farm...")
@@ -505,15 +509,12 @@ local function ensureGrumbleteeth()
         end
 
         attempt = attempt + 1
-        local msg = chatSamples[(attempt % #chatSamples) + 1] .. " " .. math.random(10, 99)
+        local msg = chatSamples[math.random(#chatSamples)] .. " " .. math.random(100, 999)
         bot:say(msg)
-        sleep(2000)
-    end
 
-    if hasActiveMalady() then
-        print(string.format("[Malady] Bot telah terinfeksi Malady (ID %s). Melanjutkan rotasi...", tostring(bot.malady or "Active")))
-    else
-        print("[Malady] Batas waktu memicu Grumbleteeth tercapai. Melanjutkan rotasi farm...")
+        -- Jeda acak 3 hingga 5 detik (3000 - 5000 ms) agar terbebas dari deteksi spam server
+        local delayChat = math.random(3000, 5000)
+        sleep(delayChat)
     end
 end
 
