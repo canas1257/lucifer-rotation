@@ -602,6 +602,21 @@ local function doHarvest(dest)
             sleep(180)
             bot:collect(3)
             harvested = harvested + 1
+
+            -- Sesuai arahan Bos Anas: Jika di backpack ada seed, bot langsung harvest dan tanam di tile tersebut!
+            -- Jika tidak ada seed di tas, bot hanya harvest seperti biasa tanpa jeda tanam.
+            local currentSeeds = bot:getInventory():findItem(CONFIG.SEED_ID)
+            if currentSeeds > 0 then
+                local curTile = world:getTile(tile.x, tile.y)
+                if not curTile or curTile.fg ~= 0 then
+                    sleep(100)
+                    curTile = world:getTile(tile.x, tile.y)
+                end
+                if curTile and curTile.fg == 0 then
+                    bot:place(tile.x, tile.y, CONFIG.SEED_ID)
+                    sleep(160)
+                end
+            end
         end
     end
 
