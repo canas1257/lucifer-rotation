@@ -437,6 +437,86 @@ local function checkAndEquipPickaxe()
 end
 
 -- ========================================================
+-- ANTI TORN MUSCLE (GRUMBLETEETH MALADY TRIGGER)
+-- Di Growtopia, player hanya bisa terkena 1 malady dalam satu waktu.
+-- Trik: Sengaja memicu Grumbleteeth (via auto-chat) agar kebal dari
+-- Torn Punching Muscle (yang mengurangi damage punch / speed break).
+-- Begitu terkena malady, bot langsung lanjut rotasi seperti biasa.
+-- ========================================================
+local function hasActiveMalady()
+    if bot.malady and type(bot.malady) == "number" and bot.malady ~= 0 then
+        return true
+    end
+    if bot.getMaladyDuration then
+        local dur = bot:getMaladyDuration()
+        if type(dur) == "number" and dur > 0 then
+            return true
+        end
+    end
+    return false
+end
+
+local function isGrumbleteethEnabled()
+    if CONFIG.AUTO_GRUMBLETEETH ~= nil then return CONFIG.AUTO_GRUMBLETEETH == true end
+    if CONFIG.AutoGrumbleteeth ~= nil then return CONFIG.AutoGrumbleteeth == true end
+    if CONFIG.autoMalady ~= nil and (CONFIG.malady == "Grumbleteeth" or CONFIG.malady == nil) then
+        return CONFIG.autoMalady == true
+    end
+    return false
+end
+
+local function ensureGrumbleteeth()
+    if not isGrumbleteethEnabled() then return end
+
+    if hasActiveMalady() then
+        print(string.format("[Malady] Bot sudah memiliki Malady (ID %s). Kebal dari pengurangan damage! Melanjutkan rotasi...", tostring(bot.malady or "Active")))
+        return
+    end
+
+    print("[Malady] Bot belum memiliki malady. Memicu Grumbleteeth (auto-chat di Home) agar kebal dari Torn Punching Muscle...")
+    updateWebhook("Memicu Grumbleteeth (Anti Torn Muscle)", "-")
+
+    if not warp(CONFIG.HOME) then
+        print("[Malady] Gagal warp ke Home untuk memicu Grumbleteeth.")
+        return
+    end
+
+    local chatSamples = {
+        "so cold today",
+        "need some fresh air",
+        "teeth are chattering",
+        "farming grind",
+        "freezing breeze",
+        "growtopia time",
+        "just chatting",
+        "brrr so cold",
+    }
+
+    local maxAttempts = 60 -- Maksimal ~2 menit
+    local attempt = 0
+
+    while waitOnline() and attempt < maxAttempts do
+        if hasActiveMalady() then
+            print(string.format("[Malady] SUKSES! Bot telah terinfeksi Malady (ID %s). Kebal dari Torn Punching Muscle!", tostring(bot.malady or "Active")))
+            print("[Malady] Melanjutkan rotasi farm...")
+            sleep(1000)
+            return
+        end
+
+        attempt = attempt + 1
+        local msg = chatSamples[(attempt % #chatSamples) + 1] .. " " .. math.random(10, 99)
+        bot:say(msg)
+        sleep(2000)
+    end
+
+    if hasActiveMalady() then
+        print(string.format("[Malady] Bot telah terinfeksi Malady (ID %s). Melanjutkan rotasi...", tostring(bot.malady or "Active")))
+    else
+        print("[Malady] Batas waktu memicu Grumbleteeth tercapai. Melanjutkan rotasi farm...")
+    end
+end
+
+-- ========================================================
 -- HELPER NAVIGASI ZIGZAG (SNAKE PATTERN)
 -- Mengurutkan pohon & lahan tanam agar bot berjalan zigzag:
 -- Baris 1: Kiri -> Kanan (x naik)
@@ -1039,6 +1119,9 @@ while waitOnline() do
     -- 1. Pengecekan & Pengambilan Pickaxe otomatis saat start / awal putaran
     checkAndEquipPickaxe()
 
+    -- 2. Trik Kebal Malady: Pastikan bot terkena Grumbleteeth agar tidak terkena Torn Punching Muscle (pengurang damage)
+    ensureGrumbleteeth()
+
     if not CONFIG.FARMS or #CONFIG.FARMS == 0 then
         print("[Engine] Peringatan: Daftar CONFIG.FARMS kosong!")
         break
@@ -1046,6 +1129,7 @@ while waitOnline() do
 
     for _, currentFarm in ipairs(CONFIG.FARMS) do
         local farmName = type(currentFarm) == "table" and currentFarm.world or currentFarm
+        ensureGrumbleteeth()
         print("[Engine] Memulai farm: " .. farmName)
         local currentState = (bot:getInventory():findItem(CONFIG.SEED_ID) > 0) and STATE.PLANT or STATE.HARVEST
 

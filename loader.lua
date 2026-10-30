@@ -32,6 +32,16 @@ local CONFIG = {
     BLOCK_ID = 4584,       -- Contoh: Pepper Tree Block
     SEED_ID = 4585,        -- Contoh: Pepper Tree Seed
 
+    -- ====================================================
+    -- Trik Kebal Malady (Anti Torn Punching Muscle)
+    -- ====================================================
+    -- Di Growtopia, player hanya bisa terkena 1 malady dalam satu waktu.
+    -- Jika bot terkena Grumbleteeth (penyakit akibat banyak chat), bot menjadi
+    -- KEBAL dari Torn Punching Muscle (penyakit pengurangan damage punch).
+    -- true  = Jika bot belum sakit, bot spam chat di Home sampai terkena Grumbleteeth, lalu lanjut rotasi.
+    -- false = Nonaktifkan fitur ini.
+    AUTO_GRUMBLETEETH = true,
+
     -- Batas & Ambang Toleransi
     BATCH_LIMIT = 20,      -- Maksimal pohon dipanen sebelum pulang ke home
     STORE_SEED_MIN = 100,  -- Minimal seed di inventory sebelum di-drop ke storage
