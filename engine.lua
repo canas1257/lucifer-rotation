@@ -1018,43 +1018,75 @@ end
 print("[Engine] Memulai eksekusi rotasi Lucifer v2.86...")
 updateWebhook("Engine Dimulai", "-")
 
--- 1. Pengecekan & Pengambilan Pickaxe otomatis saat start
-checkAndEquipPickaxe()
+-- Pengecekan settingan mode rotasi (Rotasi = true / false)
+local isLoop = (CONFIG.Rotasi == true or CONFIG.ROTASI == true or CONFIG.rotasi == true)
+if isLoop then
+    print("[Engine] Mode Rotasi AKTIF (Rotasi = true): Bot akan berputar terus-menerus kembali ke world pertama setelah world terakhir selesai.")
+else
+    print("[Engine] Mode Sekali Jalan (Rotasi = false): Bot hanya akan menjalankan 1 kali putaran seluruh world lalu selesai.")
+end
 
-for _, currentFarm in ipairs(CONFIG.FARMS) do
-    local farmName = type(currentFarm) == "table" and currentFarm.world or currentFarm
-    print("[Engine] Memulai farm: " .. farmName)
-    local currentState = (bot:getInventory():findItem(CONFIG.SEED_ID) > 0) and STATE.PLANT or STATE.HARVEST
+local round = 0
+while waitOnline() do
+    round = round + 1
+    if isLoop and round > 1 then
+        print(string.format("\n[Engine] ========================================"))
+        print(string.format("[Engine] MEMULAI ROTASI PUTARAN KE-%d (Kembali ke World Pertama)", round))
+        print(string.format("[Engine] ========================================\n"))
+        updateWebhook(string.format("Rotasi Putaran Ke-%d", round), "-")
+    end
 
-    while waitOnline() do
-        if currentState == STATE.HARVEST then
-            currentState = doHarvest(currentFarm)
-        elseif currentState == STATE.BREAK_HOME then
-            currentState = doBreakHome(currentFarm)
-        elseif currentState == STATE.BUY_PACK then
-            currentState = doBuyPack(currentFarm)
-        elseif currentState == STATE.STORE then
-            currentState = doStore(currentFarm)
-        elseif currentState == STATE.PLANT then
-            currentState = doPlant(currentFarm)
-        elseif currentState == STATE.NEXT_WORLD then
-            -- Sesuai arahan Bos Anas: Verifikasi ulang sebelum benar-benar pindah world
-            print(string.format("[Engine] Memverifikasi ulang world '%s' sebelum pindah...", farmName))
-            if warp(currentFarm) then
-                sleep(1000) -- Jeda stabilisasi streaming data tile
-                local finalTrees, stillGrowing = getZigzagReadyTrees()
-                if #finalTrees > 0 then
-                    print(string.format("[Engine] Terdeteksi masih ada %d pohon siap panen! Membatalkan pindah world & memulai ulang harvest...", #finalTrees))
-                    currentState = STATE.HARVEST
+    -- 1. Pengecekan & Pengambilan Pickaxe otomatis saat start / awal putaran
+    checkAndEquipPickaxe()
+
+    if not CONFIG.FARMS or #CONFIG.FARMS == 0 then
+        print("[Engine] Peringatan: Daftar CONFIG.FARMS kosong!")
+        break
+    end
+
+    for _, currentFarm in ipairs(CONFIG.FARMS) do
+        local farmName = type(currentFarm) == "table" and currentFarm.world or currentFarm
+        print("[Engine] Memulai farm: " .. farmName)
+        local currentState = (bot:getInventory():findItem(CONFIG.SEED_ID) > 0) and STATE.PLANT or STATE.HARVEST
+
+        while waitOnline() do
+            if currentState == STATE.HARVEST then
+                currentState = doHarvest(currentFarm)
+            elseif currentState == STATE.BREAK_HOME then
+                currentState = doBreakHome(currentFarm)
+            elseif currentState == STATE.BUY_PACK then
+                currentState = doBuyPack(currentFarm)
+            elseif currentState == STATE.STORE then
+                currentState = doStore(currentFarm)
+            elseif currentState == STATE.PLANT then
+                currentState = doPlant(currentFarm)
+            elseif currentState == STATE.NEXT_WORLD then
+                -- Sesuai arahan Bos Anas: Verifikasi ulang sebelum benar-benar pindah world
+                print(string.format("[Engine] Memverifikasi ulang world '%s' sebelum pindah...", farmName))
+                if warp(currentFarm) then
+                    sleep(1000) -- Jeda stabilisasi streaming data tile
+                    local finalTrees, stillGrowing = getZigzagReadyTrees()
+                    if #finalTrees > 0 then
+                        print(string.format("[Engine] Terdeteksi masih ada %d pohon siap panen! Membatalkan pindah world & memulai ulang harvest...", #finalTrees))
+                        currentState = STATE.HARVEST
+                    else
+                        print(string.format("[Engine] Terverifikasi 100%% tidak ada pohon siap panen yang tersisa (%d pohon masih tumbuh). Pindah ke world berikutnya...", stillGrowing))
+                        break
+                    end
                 else
-                    print(string.format("[Engine] Terverifikasi 100%% tidak ada pohon siap panen yang tersisa (%d pohon masih tumbuh). Pindah ke world berikutnya...", stillGrowing))
                     break
                 end
-            else
-                break
             end
         end
     end
+
+    -- Jika settingan Rotasi bernilai false, bot hanya jalan 1x putaran lalu selesai
+    if not isLoop then
+        break
+    end
+
+    print(string.format("[Engine] Selesai di world terakhir (Putaran ke-%d selesai). Settingan Rotasi = true aktif: kembali ke world pertama seperti baru mulai...", round))
+    sleep(2000)
 end
 
 updateWebhook("Seluruh Farm Rotasi Selesai", "-")

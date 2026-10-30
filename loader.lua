@@ -7,6 +7,11 @@
 -- 1. KONFIGURASI ROTASI & FITUR (Sesuaikan di sini)
 -- ========================================================
 local CONFIG = {
+    -- Mode Rotasi (Looping):
+    -- true  = Bot berputar terus-menerus (setelah world terakhir selesai, kembali ke world pertama seperti baru mulai)
+    -- false = Bot hanya berjalan 1 kali putaran seluruh world lalu selesai
+    Rotasi = true,
+
     -- Daftar world farm yang akan dipanen & ditanam
     -- Format: { world = "NAMA_WORLD", door = "DOOR_ID" } atau string "NAMA_WORLD"
     FARMS = {
