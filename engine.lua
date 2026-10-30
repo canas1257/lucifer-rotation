@@ -1038,7 +1038,21 @@ for _, currentFarm in ipairs(CONFIG.FARMS) do
         elseif currentState == STATE.PLANT then
             currentState = doPlant(currentFarm)
         elseif currentState == STATE.NEXT_WORLD then
-            break
+            -- Sesuai arahan Bos Anas: Verifikasi ulang sebelum benar-benar pindah world
+            print(string.format("[Engine] Memverifikasi ulang world '%s' sebelum pindah...", farmName))
+            if warp(currentFarm) then
+                sleep(1000) -- Jeda stabilisasi streaming data tile
+                local finalTrees, stillGrowing = getZigzagReadyTrees()
+                if #finalTrees > 0 then
+                    print(string.format("[Engine] Terdeteksi masih ada %d pohon siap panen! Membatalkan pindah world & memulai ulang harvest...", #finalTrees))
+                    currentState = STATE.HARVEST
+                else
+                    print(string.format("[Engine] Terverifikasi 100%% tidak ada pohon siap panen yang tersisa (%d pohon masih tumbuh). Pindah ke world berikutnya...", stillGrowing))
+                    break
+                end
+            else
+                break
+            end
         end
     end
 end
