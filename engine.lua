@@ -665,12 +665,31 @@ local function doBreakHome(dest)
     if not warp(CONFIG.HOME) then return STATE.BREAK_HOME end
 
     print("[Home] Auto-scan spot 3 blok di atas kepala (kiri, tengah, kanan)...")
-    local standX, standY = findBreakSpot()
-    print(string.format("[Home] Spot terpilih: Berdiri (%d, %d) | Target Break: (%d, %d), (%d, %d), (%d, %d)",
-        standX, standY, standX, standY - 1, standX - 1, standY - 1, standX + 1, standY - 1))
+    local targetX, targetY = findBreakSpot()
+    print(string.format("[Home] Target scan: (%d, %d). Mencoba findPath ke lokasi...", targetX, targetY))
 
-    bot:findPath(standX, standY)
+    bot:findPath(targetX, targetY)
     sleep(400)
+
+    -- Sesuai arahan Bos Anas: Cek lokasi BERDIRI ASLI bot saat ini, jangan hanya mengandalkan target findPath!
+    local standX, standY = bot.x, bot.y
+    if standX ~= targetX or standY ~= targetY then
+        print(string.format("[Home] Info: Bot berada di (%d, %d), bukan di target (%d, %d). Menggunakan posisi berdiri asli!",
+            standX, standY, targetX, targetY))
+    else
+        print(string.format("[Home] Sukses tiba di spot: Berdiri (%d, %d)", standX, standY))
+    end
+
+    -- Jika posisi berdiri asli berada di White Door (ID 6), melangkah menjauh agar tidak terblokir sistem game
+    if isAtWhiteDoor() then
+        print("[Home] Posisi berdiri bot di White Door (ID 6). Melangkah menjauh...")
+        if not (bot:findPath(standX + 1, standY) or bot:findPath(standX - 1, standY)) then
+            bot:moveTo(1, 0)
+        end
+        sleep(400)
+        standX, standY = bot.x, bot.y
+        print(string.format("[Home] Posisi berdiri aman terbaru: (%d, %d)", standX, standY))
+    end
 
     bot.auto_collect = true
 
@@ -690,16 +709,29 @@ local function doBreakHome(dest)
             break
         end
 
-        -- Proteksi reconnect & recovery White Door langsung ke posisi kerja (standX, standY)
+        -- Proteksi reconnect & recovery White Door langsung ke posisi kerja
         reconnectGuard(CONFIG.HOME, standX, standY)
+
+        -- Selalu ambil posisi BERDIRI ASLI bot saat ini secara dinamis
+        local curX, curY = bot.x, bot.y
+
+        -- Jika bot terdorong/berada di White Door, melangkah menjauh
+        if isAtWhiteDoor() then
+            if not (bot:findPath(curX + 1, curY) or bot:findPath(curX - 1, curY)) then
+                bot:moveTo(1, 0)
+            end
+            sleep(300)
+            curX, curY = bot.x, bot.y
+            standX, standY = curX, curY
+        end
 
         local world = bot:getWorld()
         if not world then break end
 
-        -- 1. Letakkan hingga 3 blok
+        -- 1. Letakkan hingga 3 blok tepat di atas kepala posisi ASLI bot
         for _, off in ipairs(targetOffsets) do
-            local tx = standX + off.dx
-            local ty = standY + off.dy
+            local tx = curX + off.dx
+            local ty = curY + off.dy
             local target = world:getTile(tx, ty)
             if target and target.fg == 0 and bot:getInventory():findItem(CONFIG.BLOCK_ID) > 0 then
                 bot:place(tx, ty, CONFIG.BLOCK_ID)
@@ -707,15 +739,15 @@ local function doBreakHome(dest)
             end
         end
 
-        -- 2. Pukul ketiga blok sampai hancur
+        -- 2. Pukul ketiga blok sampai hancur relatif terhadap posisi ASLI bot
         local totalHits = 0
         while waitOnline() and totalHits < (maxHits * 3) do
             if isAtWhiteDoor() then break end
 
             local anyBlock = false
             for _, off in ipairs(targetOffsets) do
-                local tx = standX + off.dx
-                local ty = standY + off.dy
+                local tx = curX + off.dx
+                local ty = curY + off.dy
                 local cur = bot:getWorld():getTile(tx, ty)
                 if cur and cur.fg ~= 0 then
                     anyBlock = true
@@ -748,6 +780,7 @@ local function doBreakHome(dest)
             warp(CONFIG.HOME)
             bot:findPath(standX, standY)
             sleep(400)
+            standX, standY = bot.x, bot.y
             bot.auto_collect = true
         end
     end
