@@ -39,6 +39,8 @@ local function runTests()
     local simulateMissingConnectMethod = false
     local simulateStatusPanic = false
     local simulateStorageFail = false
+    local simulateMissingAddStorageMethod = false
+    local simulateMissingGetWorldManager = false
 
     _G.addBot = function(details)
         if simulateAddBotFail then
@@ -110,15 +112,21 @@ local function runTests()
     end
 
     _G.getWorldManager = function()
-        return {
+        if simulateMissingGetWorldManager then
+            return nil
+        end
+        local mgr = {
             removeStorage = function(self, w, t) end,
-            addStorage = function(self, nd, t, id)
+            selectStorage = function(self, w, t) end
+        }
+        if not simulateMissingAddStorageMethod then
+            mgr.addStorage = function(self, nd, t, id)
                 if simulateStorageFail then
                     error("STORAGE_SUBSYSTEM_DISK_FULL")
                 end
-            end,
-            selectStorage = function(self, w, t) end
-        }
+            end
+        end
+        return mgr
     end
 
     local loader = require("login")
@@ -147,6 +155,7 @@ local function runTests()
     assertTrue(loader.isValidBase64("VG9rZW4x"), "Valid Base64 without padding")
     assertTrue(loader.isValidBase64("VG9rZW4="), "Valid Base64 with 1 padding")
     assertTrue(loader.isValidBase64("VG=="), "Valid Base64 with 2 paddings")
+    assertTrue(loader.isValidBase64("VGVzdFRva2Vu"), "Valid Base64 token from login.lua header example")
     assertTrue(not loader.isValidBase64("===="), "Reject all padding ====")
     assertTrue(not loader.isValidBase64("VG=rZW4="), "Reject padding in middle")
     assertTrue(not loader.isValidBase64("V==="), "Reject 3 paddings")
@@ -165,6 +174,14 @@ local function runTests()
         assertEq("0123456789ABCDEF0123456789ABCDEF", data.rid, "Parsed RID matches (32 hex)")
         assertEq("FEDCBA9876543210FEDCBA9876543210", data.wk, "Parsed WK matches (32 hex)")
         assertEq(syntheticToken, data.ltoken, "Parsed LTOKEN matches")
+    end
+
+    -- Test header example line from login.lua
+    local headerExampleLine = "synthetic.bot@example.com|11:22:33:AA:BB:CC:0123456789ABCDEF0123456789ABCDEF:FEDCBA9876543210FEDCBA9876543210:VGVzdFRva2Vu"
+    local headerData, headerErr = loader.parseAccountLine(headerExampleLine)
+    assertTrue(headerData ~= nil, "Header comment example line parses successfully")
+    if headerData then
+        assertEq("VGVzdFRva2Vu", headerData.ltoken, "Header example token matches")
     end
 
     print("\n--- 5. Testing Strict Parser: Invalid & Rejected Cases ---")
@@ -239,23 +256,44 @@ local function runTests()
     loader.CONFIG.AUTO_CONNECT = false
 
     print("\n--- 8. Testing Status Property Read Exception Resilience ---")
-    -- Simulasi membaca bot.status melempar runtime exception
     simulateStatusPanic = true
     local resStatusPanic = loader.processAccount("panic.status@example.com|AA:BB:CC:DD:EE:FF:11112222333344445555666677778888:aaaabbbbccccddddeeeeffff00001111:" .. sensitiveToken, 5)
     assertEq("ADDED", resStatusPanic.status, "Account added and survives status getter panic")
     assertEq(false, resStatusPanic.is_online, "is_online defaults safely to false on getter error")
     simulateStatusPanic = false
 
-    print("\n--- 9. Testing Storage Setup Failure Reporting ---")
+    print("\n--- 9. Testing Storage Setup & Failure Reporting Edge Cases ---")
+    -- 9A: Storage diisi, manager tidak tersedia
     loader.CONFIG.SEED_WORLD = "STORAGE_WORLD"
+    local origGetWorldManager = _G.getWorldManager
+    _G.getWorldManager = nil
+    local stRes1, stErr1 = loader.setupStorages()
+    assertEq(false, stRes1, "Storage fails when world configured but getWorldManager missing")
+    assertEq("STORAGE_MANAGER_UNAVAILABLE", stErr1, "Error is STORAGE_MANAGER_UNAVAILABLE")
+    _G.getWorldManager = origGetWorldManager
+
+    -- 9B: Storage diisi, addStorage method tidak ada pada manager
+    simulateMissingAddStorageMethod = true
+    local stRes2, stErr2 = loader.setupStorages()
+    assertEq(false, stRes2, "Storage fails when addStorage method missing")
+    assertEq("STORAGE_API_UNAVAILABLE", stErr2, "Error is STORAGE_API_UNAVAILABLE")
+    simulateMissingAddStorageMethod = false
+
+    -- 9C: Storage diisi, addStorage throw exception
     simulateStorageFail = true
-    local storageResults = loader.processAccounts("synthetic.alpha@example.com|11:22:33:AA:BB:CC:0123456789ABCDEF0123456789ABCDEF:FEDCBA9876543210FEDCBA9876543210:VGVzdFRva2Vu==\n")
+    local storageResults = loader.processAccounts("synthetic.alpha@example.com|11:22:33:AA:BB:CC:0123456789ABCDEF0123456789ABCDEF:FEDCBA9876543210FEDCBA9876543210:VGVzdFRva2Vu\n")
     assertEq(false, storageResults.storage_ok, "Storage failure is captured and reported (not swallowed)")
     assertEq("STORAGE_ADD_EXCEPTION", storageResults.storage_status, "Storage failure status code is explicit")
     local storageReport = loader.formatSummaryReport(storageResults)
     assertTrue(storageReport:find("GAGAL") ~= nil, "Summary report explicitly notes Storage Setup GAGAL")
     simulateStorageFail = false
+
+    -- 9D: Storage kosong -> SKIPPED_EMPTY_CONFIG bernilai true
     loader.CONFIG.SEED_WORLD = ""
+    loader.CONFIG.PACK_WORLD = ""
+    local stEmptyOk, stEmptyStatus = loader.setupStorages()
+    assertEq(true, stEmptyOk, "Empty storage config returns true (skipped safely)")
+    assertEq("STORAGE_SKIPPED_EMPTY_CONFIG", stEmptyStatus, "Status is STORAGE_SKIPPED_EMPTY_CONFIG")
 
     print("\n--- 10. Testing Batch Processing & Summary Report ---")
     local batchInput = [[

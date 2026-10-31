@@ -10,7 +10,7 @@
 -- ==============================================================================
 local ACCOUNTS = [[
 -- Paste akun di sini (satu akun per baris):
--- synthetic.bot@example.com|11:22:33:AA:BB:CC:0123456789ABCDEF0123456789ABCDEF:FEDCBA9876543210FEDCBA9876543210:VGVzdFRva2Vu==
+-- synthetic.bot@example.com|11:22:33:AA:BB:CC:0123456789ABCDEF0123456789ABCDEF:FEDCBA9876543210FEDCBA9876543210:VGVzdFRva2Vu
 ]]
 
 -- ==============================================================================
@@ -179,19 +179,23 @@ end
 
 -- ------------------------------------------------------------------------------
 -- World Manager / Storage Setup (Shared Manager)
--- Error dilaporkan eksplisit, tidak ditelan diam-diam
+-- Error dilaporkan eksplisit jika world diisi tetapi API/Manager tidak tersedia
 -- ------------------------------------------------------------------------------
 local function addStorageWorld(manager, world, door, storageType, seedId)
-    if not world or world == "" or not manager or not manager.addStorage then
+    if not world or world == "" then
         return true, "STORAGE_SKIPPED"
     end
+    if not manager or type(manager.addStorage) ~= "function" then
+        return false, "STORAGE_API_UNAVAILABLE"
+    end
+
     local nameAndDoor = (door and door ~= "") and (world .. ":" .. door) or world
     local ok, _ = pcall(function()
-        if manager.removeStorage then
+        if type(manager.removeStorage) == "function" then
             manager:removeStorage(world, storageType)
         end
         manager:addStorage(nameAndDoor, storageType, seedId)
-        if manager.selectStorage then
+        if type(manager.selectStorage) == "function" then
             manager:selectStorage(world, storageType)
         end
     end)
@@ -202,22 +206,33 @@ local function addStorageWorld(manager, world, door, storageType, seedId)
 end
 
 local function setupStorages()
+    local hasSeed = CONFIG.SEED_WORLD and CONFIG.SEED_WORLD ~= ""
+    local hasPack = CONFIG.PACK_WORLD and CONFIG.PACK_WORLD ~= ""
+
+    if not hasSeed and not hasPack then
+        return true, "STORAGE_SKIPPED_EMPTY_CONFIG"
+    end
+
     if type(getWorldManager) ~= "function" or type(StorageType) ~= "table" then
-        return true, "STORAGE_SKIPPED_NO_MANAGER"
+        return false, "STORAGE_MANAGER_UNAVAILABLE"
     end
     local ok, manager = pcall(getWorldManager)
     if not ok or not manager then
         return false, "STORAGE_MANAGER_FAILED"
     end
 
-    local seedOk, seedErr = addStorageWorld(manager, CONFIG.SEED_WORLD, CONFIG.SEED_DOOR, StorageType.seed, CONFIG.SEED_ITEM)
-    if not seedOk then
-        return false, seedErr
+    if hasSeed then
+        local seedOk, seedErr = addStorageWorld(manager, CONFIG.SEED_WORLD, CONFIG.SEED_DOOR, StorageType.seed, CONFIG.SEED_ITEM)
+        if not seedOk then
+            return false, seedErr
+        end
     end
 
-    local packOk, packErr = addStorageWorld(manager, CONFIG.PACK_WORLD, CONFIG.PACK_DOOR, StorageType.pack, 0)
-    if not packOk then
-        return false, packErr
+    if hasPack then
+        local packOk, packErr = addStorageWorld(manager, CONFIG.PACK_WORLD, CONFIG.PACK_DOOR, StorageType.pack, 0)
+        if not packOk then
+            return false, packErr
+        end
     end
 
     return true, "STORAGE_CONFIGURED"
