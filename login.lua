@@ -502,9 +502,11 @@ local function formatSummaryReport(results)
 end
 
 -- ==============================================================================
--- Auto Execution (Jika dijalankan langsung di Lucifer dan ACCOUNTS terisi)
+-- Auto Execution (Jika dijalankan langsung di Lucifer atau CLI standalone)
 -- ==============================================================================
+local isModule = (... == "login" or ... == "lucifer-rotation.login")
 local hasExecutableAccount = false
+
 for rawLine in ACCOUNTS:gmatch("[^\r\n]+") do
     local trimmed = rawLine:match("^%s*(.-)%s*$")
     if trimmed ~= "" and trimmed:sub(1, 2) ~= "--" then
@@ -513,9 +515,13 @@ for rawLine in ACCOUNTS:gmatch("[^\r\n]+") do
     end
 end
 
-if hasExecutableAccount then
-    local res = processAccounts(ACCOUNTS)
-    print(formatSummaryReport(res))
+if not isModule then
+    if hasExecutableAccount then
+        local res = processAccounts(ACCOUNTS)
+        print(formatSummaryReport(res))
+    else
+        print("[INFO] Skrip login.lua aktif, namun daftar ACCOUNTS masih kosong atau semua baris diawali komentar (--). Silakan paste akun Anda di dalam blok local ACCOUNTS = [[ ... ]] tanpa awalan '--' lalu jalankan ulang.")
+    end
 end
 
 -- Ekspor modul untuk unit testing dan integrasi Node.js
