@@ -724,10 +724,16 @@ local function findBreakSpot()
     local world = bot:getWorld()
     if not world then return bot.x, bot.y end
 
+    -- Sesuai arahan Bos Anas: Batasi pencarian lokasi break hanya di antara Y 5 sampai Y 45
+    local minY = CONFIG.BREAK_MIN_Y or 5
+    local maxY = CONFIG.BREAK_MAX_Y or 45
+    minY = math.max(2, minY)
+    maxY = math.min(world.y - 3, maxY)
+
     local candidates = {}
     for _, tile in ipairs(world:getTilesSafe()) do
         local sx, sy = tile.x, tile.y
-        if sx >= 2 and sx <= (world.x - 2) and sy >= 2 and sy <= (world.y - 3) then
+        if sx >= 2 and sx <= (world.x - 2) and sy >= minY and sy <= maxY then
             if tile.fg == 0 and tile.fg ~= 6 then
                 local ground = world:getTile(sx, sy + 1)
                 -- Syarat lantai pijakan:

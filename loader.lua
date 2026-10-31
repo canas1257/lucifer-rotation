@@ -46,6 +46,8 @@ local CONFIG = {
     BATCH_LIMIT = 20,      -- Maksimal pohon dipanen sebelum pulang ke home
     STORE_SEED_MIN = 100,  -- Minimal seed di inventory sebelum di-drop ke storage
     PUNCH_RETRY_MAX = 15,  -- Batas hit blok sebelum skip (mencegah stuck)
+    BREAK_MIN_Y = 5,       -- Batas minimal baris Y spot break di Home (antara Y 5 - 45)
+    BREAK_MAX_Y = 45,      -- Batas maksimal baris Y spot break di Home (antara Y 5 - 45)
 
     -- Interval Aksi Bot (Detik)
     ACTION_INTERVALS = {
