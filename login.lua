@@ -10,7 +10,7 @@
 -- ==============================================================================
 local ACCOUNTS = [[
 -- Paste akun di sini (satu akun per baris):
--- robdaledonbraroseette@gmail.com|D6:88:91:BD:31:2B:F30FADD759D764B5A7462CAD2704DA06:ba340439688721424466a511bdfd5c71:Z0bY...==
+-- synthetic.bot@example.com|11:22:33:AA:BB:CC:0123456789ABCDEF0123456789ABCDEF:FEDCBA9876543210FEDCBA9876543210:VGVzdFRva2Vu==
 ]]
 
 -- ==============================================================================
@@ -179,13 +179,14 @@ end
 
 -- ------------------------------------------------------------------------------
 -- World Manager / Storage Setup (Shared Manager)
+-- Error dilaporkan eksplisit, tidak ditelan diam-diam
 -- ------------------------------------------------------------------------------
 local function addStorageWorld(manager, world, door, storageType, seedId)
     if not world or world == "" or not manager or not manager.addStorage then
-        return
+        return true, "STORAGE_SKIPPED"
     end
     local nameAndDoor = (door and door ~= "") and (world .. ":" .. door) or world
-    pcall(function()
+    local ok, _ = pcall(function()
         if manager.removeStorage then
             manager:removeStorage(world, storageType)
         end
@@ -194,17 +195,32 @@ local function addStorageWorld(manager, world, door, storageType, seedId)
             manager:selectStorage(world, storageType)
         end
     end)
+    if not ok then
+        return false, "STORAGE_ADD_EXCEPTION"
+    end
+    return true, "STORAGE_OK"
 end
 
 local function setupStorages()
     if type(getWorldManager) ~= "function" or type(StorageType) ~= "table" then
-        return
+        return true, "STORAGE_SKIPPED_NO_MANAGER"
     end
     local ok, manager = pcall(getWorldManager)
-    if not ok or not manager then return end
+    if not ok or not manager then
+        return false, "STORAGE_MANAGER_FAILED"
+    end
 
-    addStorageWorld(manager, CONFIG.SEED_WORLD, CONFIG.SEED_DOOR, StorageType.seed, CONFIG.SEED_ITEM)
-    addStorageWorld(manager, CONFIG.PACK_WORLD, CONFIG.PACK_DOOR, StorageType.pack, 0)
+    local seedOk, seedErr = addStorageWorld(manager, CONFIG.SEED_WORLD, CONFIG.SEED_DOOR, StorageType.seed, CONFIG.SEED_ITEM)
+    if not seedOk then
+        return false, seedErr
+    end
+
+    local packOk, packErr = addStorageWorld(manager, CONFIG.PACK_WORLD, CONFIG.PACK_DOOR, StorageType.pack, 0)
+    if not packOk then
+        return false, packErr
+    end
+
+    return true, "STORAGE_CONFIGURED"
 end
 
 -- ------------------------------------------------------------------------------
@@ -254,9 +270,9 @@ local function setupBotCommon(bot)
 end
 
 -- ------------------------------------------------------------------------------
--- Process Single Account (Isolasi Error & Zero Credential Leakage)
+-- Process Single Account (Isolasi Error Total & Zero Credential Leakage)
 -- ------------------------------------------------------------------------------
-local function processAccount(accountLine, lineNum)
+local function _rawProcessAccount(accountLine, lineNum)
     local parseData, parseErr = parseAccountLine(accountLine)
     if not parseData then
         if parseErr == "EMPTY_LINE" then
@@ -290,8 +306,7 @@ local function processAccount(accountLine, lineNum)
         }
     end
 
-    -- Panggil addBot dalam pcall.
-    -- Zero Leak Guard: Jangan pernah memasukkan botOrErr mentah ke reason!
+    -- Panggil addBot dalam pcall (Zero Leak Guard)
     local addOk, botOrErr = pcall(addBot, details)
     if not addOk then
         return {
@@ -313,8 +328,8 @@ local function processAccount(accountLine, lineNum)
 
     local targetBot = botOrErr
 
-    -- Setup bot common (Zero Leak Guard: jangan masukkan setupErr mentah ke reason)
-    local setupOk, setupErr = pcall(setupBotCommon, targetBot)
+    -- Setup bot common (Zero Leak Guard)
+    local setupOk, _ = pcall(setupBotCommon, targetBot)
     if not setupOk then
         return {
             status = "FAILED_SETUP",
@@ -327,15 +342,27 @@ local function processAccount(accountLine, lineNum)
 
     -- Penanganan koneksi eksplisit bila AUTO_CONNECT aktif
     local connectOk = true
-    if CONFIG.AUTO_CONNECT and targetBot.connect then
-        local cOk, _ = pcall(function() targetBot:connect() end)
-        if not cOk then
+    local connectStatus = "SKIPPED"
+    if CONFIG.AUTO_CONNECT then
+        if type(targetBot.connect) == "function" then
+            local cOk, _ = pcall(function() targetBot:connect() end)
+            if cOk then
+                connectStatus = "CONNECT_CALLED"
+                connectOk = true
+            else
+                connectStatus = "CONNECT_EXCEPTION"
+                connectOk = false
+            end
+        else
+            connectStatus = "CONNECT_UNAVAILABLE"
             connectOk = false
         end
     end
 
+    -- Pembacaan status bot dibungkus pcall agar kebal terhadap metamethod error
     local isOnline = false
-    if BotStatus and targetBot.status == BotStatus.online then
+    local statusOk, statusVal = pcall(function() return targetBot.status end)
+    if statusOk and BotStatus and statusVal == BotStatus.online then
         isOnline = true
     end
 
@@ -345,15 +372,30 @@ local function processAccount(accountLine, lineNum)
         email = masked,
         bot = targetBot,
         connect_ok = connectOk,
+        connect_status = connectStatus,
         is_online = isOnline
     }
+end
+
+-- Wrapper luar pcall memastikan SELURUH proses per baris terisolasi total
+local function processAccount(accountLine, lineNum)
+    local ok, res = pcall(_rawProcessAccount, accountLine, lineNum)
+    if not ok then
+        return {
+            status = "FAILED_PROCESS",
+            line = lineNum,
+            email = "<unknown>",
+            reason = "PROCESS_EXCEPTION"
+        }
+    end
+    return res
 end
 
 -- ------------------------------------------------------------------------------
 -- Batch Processor
 -- ------------------------------------------------------------------------------
 local function processAccounts(rawAccountsText)
-    setupStorages()
+    local storageOk, storageErr = setupStorages()
 
     local results = {
         total_lines = 0,
@@ -361,8 +403,11 @@ local function processAccounts(rawAccountsText)
         failed_parse = 0,
         failed_add = 0,
         failed_setup = 0,
+        failed_process = 0,
         online_count = 0,
         connect_fail_count = 0,
+        storage_ok = storageOk,
+        storage_status = storageErr,
         items = {}
     }
 
@@ -388,6 +433,8 @@ local function processAccounts(rawAccountsText)
                 results.failed_add = results.failed_add + 1
             elseif res.status == "FAILED_SETUP" then
                 results.failed_setup = results.failed_setup + 1
+            elseif res.status == "FAILED_PROCESS" then
+                results.failed_process = results.failed_process + 1
             end
         end
     end
@@ -405,18 +452,24 @@ local function formatSummaryReport(results)
     table.insert(lines, string.format("Berhasil Ditambahkan : %d", results.added))
     table.insert(lines, string.format("  - Status Online     : %d (Catatan: Ditambahkan != Terkonfirmasi Online)", results.online_count))
     if results.connect_fail_count > 0 then
-        table.insert(lines, string.format("  - Gagal bot:connect : %d", results.connect_fail_count))
+        table.insert(lines, string.format("  - Masalah Koneksi   : %d (connect gagal / method tidak tersedia)", results.connect_fail_count))
     end
     table.insert(lines, string.format("Gagal Parsing Format  : %d", results.failed_parse))
     table.insert(lines, string.format("Gagal addBot Engine   : %d", results.failed_add))
     table.insert(lines, string.format("Gagal Setup Config    : %d", results.failed_setup))
+    if results.failed_process and results.failed_process > 0 then
+        table.insert(lines, string.format("Gagal Fatal Proses    : %d", results.failed_process))
+    end
+    if not results.storage_ok then
+        table.insert(lines, string.format("Status Storage        : GAGAL (%s)", tostring(results.storage_status)))
+    end
     table.insert(lines, "--------------------------------------")
 
     for _, item in ipairs(results.items) do
         if item.status == "ADDED" then
             local connStr = item.is_online and "ONLINE" or "REGISTERED (Offline/Belum Login)"
             if not item.connect_ok then
-                connStr = connStr .. " [CONNECT_EXCEPTION]"
+                connStr = connStr .. " [" .. tostring(item.connect_status) .. "]"
             end
             table.insert(lines, string.format("[Baris %d] [OK] %s -> %s", item.line, item.email, connStr))
         elseif item.status == "FAILED_SETUP" then
@@ -425,6 +478,8 @@ local function formatSummaryReport(results)
             table.insert(lines, string.format("[Baris %d] [ERR] %s -> Gagal addBot: %s", item.line, item.email or "<unknown>", item.reason))
         elseif item.status == "FAILED_PARSE" then
             table.insert(lines, string.format("[Baris %d] [ERR] Format tidak valid: %s", item.line, item.reason))
+        elseif item.status == "FAILED_PROCESS" then
+            table.insert(lines, string.format("[Baris %d] [ERR] Proses akun crash: %s", item.line, item.reason))
         end
     end
 
@@ -457,6 +512,7 @@ return {
     parseAccountLine = parseAccountLine,
     setupBotCommon = setupBotCommon,
     setupStorages = setupStorages,
+    addStorageWorld = addStorageWorld,
     processAccount = processAccount,
     processAccounts = processAccounts,
     formatSummaryReport = formatSummaryReport

@@ -36,6 +36,9 @@ local function runTests()
     local simulateSetupFail = false
     local simulateSetupLeakException = false
     local simulateConnectLeakException = false
+    local simulateMissingConnectMethod = false
+    local simulateStatusPanic = false
+    local simulateStorageFail = false
 
     _G.addBot = function(details)
         if simulateAddBotFail then
@@ -54,7 +57,7 @@ local function runTests()
             wk = details.wk,
             platform = details.platform,
             secret = details.secret,
-            status = BotStatus.offline,
+            _raw_status = BotStatus.offline,
             bypass_logon = false,
             auto_ban = false,
             gem_limit = 0,
@@ -64,16 +67,32 @@ local function runTests()
             setPack = function(self, pack)
                 self.pack_name = pack
             end,
-            connect = function(self)
-                if simulateConnectLeakException then
-                    error("CONNECT_SOCKET_PANIC_LEAK_TOKEN: " .. tostring(self.name))
-                end
-                self.connect_called = true
-            end,
             auto_spam = {},
             auto_malady = {},
             rotation = {}
         }
+
+        if not simulateMissingConnectMethod then
+            mockBot.connect = function(self)
+                if simulateConnectLeakException then
+                    error("CONNECT_SOCKET_PANIC_LEAK_TOKEN: " .. tostring(self.name))
+                end
+                self.connect_called = true
+            end
+        end
+
+        -- Metatable untuk simulasi status panic
+        setmetatable(mockBot, {
+            __index = function(t, k)
+                if k == "status" then
+                    if simulateStatusPanic then
+                        error("STATUS_PROPERTY_READ_PANIC")
+                    end
+                    return t._raw_status
+                end
+                return rawget(t, k)
+            end
+        })
 
         if simulateSetupFail then
             mockBot.getConsole = function()
@@ -90,31 +109,28 @@ local function runTests()
         return mockBot
     end
 
-    local storageCallLog = {}
     _G.getWorldManager = function()
         return {
-            removeStorage = function(self, w, t)
-                table.insert(storageCallLog, "remove:" .. tostring(w))
-            end,
+            removeStorage = function(self, w, t) end,
             addStorage = function(self, nd, t, id)
-                table.insert(storageCallLog, "add:" .. tostring(nd) .. ":" .. tostring(t) .. ":" .. tostring(id))
+                if simulateStorageFail then
+                    error("STORAGE_SUBSYSTEM_DISK_FULL")
+                end
             end,
-            selectStorage = function(self, w, t)
-                table.insert(storageCallLog, "select:" .. tostring(w))
-            end
+            selectStorage = function(self, w, t) end
         }
     end
 
     local loader = require("login")
 
     print("\n--- 1. Testing Sanitization & Masking ---")
-    assertEq("ro***e@gmail.com", loader.maskEmail("robdaledonbraroseette@gmail.com"), "Mask standard email")
+    assertEq("sy***a@example.com", loader.maskEmail("synthetic.alpha@example.com"), "Mask standard email")
     assertEq("ab***z@domain.com", loader.maskEmail("abcxyz@domain.com"), "Mask short email")
     assertEq("a***@co.id", loader.maskEmail("ab@co.id"), "Mask 2-letter user email")
     assertEq("<invalid_email>", loader.maskEmail("invalid-email"), "Mask invalid email")
 
     print("\n--- 2. Testing Domain-Label Email Validator ---")
-    assertTrue(loader.isValidEmail("user@gmail.com"), "Valid simple email")
+    assertTrue(loader.isValidEmail("synthetic@example.com"), "Valid simple email")
     assertTrue(loader.isValidEmail("user@sub2.example.com"), "Valid sub2 domain email")
     assertTrue(loader.isValidEmail("user@sub2.example123.com"), "Valid sub2 domain with digits")
     assertTrue(loader.isValidEmail("user.name+gt-1@sub-server.domain.co.id"), "Valid complex email with plus, dash, dots")
@@ -138,57 +154,57 @@ local function runTests()
     assertTrue(not loader.isValidBase64("VG9rZW4@"), "Reject invalid character @")
     assertTrue(not loader.isValidBase64(""), "Reject empty string")
 
-    print("\n--- 4. Testing Strict Parser: Valid Cases ---")
-    local sampleValidToken = "Z0bYjfTAUb6REpPTJl/Fo6KKYlWjBUHFSJeMoCsrmjS7AOiotorq9B0NsXS7PKeyVdmSJMcDjaefgM0q1racZlcGRzhyeQ2bpX8AXBOBMa/2hAtsQ6TQrmT62DUR3yP1IM6QzW8yMQGR1ExkMIhKSRMEOQIsisnZ+3oMxtwPbmtjb+qlxr9YUtar8ooPjDMU8R4+FetWVGNkv5b8D7UB12LdJwg/NuZQ8JzVo8qxJI8MVsnsupCMfifqicCwlaq3mrfkl2kvH69veY+2naVFxc4nj/GQe8Sp8Jh/syLNDGkM0ZQvEN3NZK1Xfd52qShUUTWkqXgO1MfMGJgoUBrO8BEYLPnFjaly86BTNpeofIhqA8y+8O9v0zFncFf3OuQlR+UKJbAPweAb+36efN4TCTOl9LRQ5t8qhUZGshEAAKIMiPR9YzmPA0c9xGFTrF2WjwxjsFTRLB1/u1c96jIWsA=="
-    local sampleLine = "robdaledonbraroseette@gmail.com|D6:88:91:BD:31:2B:F30FADD759D764B5A7462CAD2704DA06:ba340439688721424466a511bdfd5c71:" .. sampleValidToken
+    print("\n--- 4. Testing Strict Parser: Valid Cases (Synthetic Fixtures) ---")
+    local syntheticToken = "VGVzdFN5bnRoZXRpY0Jhc2U2NFRva2VuRm9yVW5pdFRlc3RzT25seURvTm90VXNlMTIzNDU2Nzg5MA=="
+    local sampleLine = "synthetic.alpha@example.com|11:22:33:AA:BB:CC:0123456789ABCDEF0123456789ABCDEF:FEDCBA9876543210FEDCBA9876543210:" .. syntheticToken
     local data, err = loader.parseAccountLine(sampleLine)
     assertTrue(data ~= nil, "Valid line successfully parsed")
     if data then
-        assertEq("robdaledonbraroseette@gmail.com", data.email, "Parsed email matches")
-        assertEq("D6:88:91:BD:31:2B", data.mac, "Parsed MAC matches")
-        assertEq("F30FADD759D764B5A7462CAD2704DA06", data.rid, "Parsed RID matches (32 hex)")
-        assertEq("ba340439688721424466a511bdfd5c71", data.wk, "Parsed WK matches (32 hex)")
-        assertEq(sampleValidToken, data.ltoken, "Parsed LTOKEN matches")
+        assertEq("synthetic.alpha@example.com", data.email, "Parsed email matches")
+        assertEq("11:22:33:AA:BB:CC", data.mac, "Parsed MAC matches")
+        assertEq("0123456789ABCDEF0123456789ABCDEF", data.rid, "Parsed RID matches (32 hex)")
+        assertEq("FEDCBA9876543210FEDCBA9876543210", data.wk, "Parsed WK matches (32 hex)")
+        assertEq(syntheticToken, data.ltoken, "Parsed LTOKEN matches")
     end
 
     print("\n--- 5. Testing Strict Parser: Invalid & Rejected Cases ---")
-    local _, errEmailOnly = loader.parseAccountLine("someone@gmail.com")
+    local _, errEmailOnly = loader.parseAccountLine("someone@example.com")
     assertTrue(errEmailOnly ~= nil and errEmailOnly:find("ditolak"), "Email-only line strictly rejected (no dummy login)")
 
-    local _, errNoPipe = loader.parseAccountLine("someone@gmail.com:AA:BB:CC:DD:EE:FF")
+    local _, errNoPipe = loader.parseAccountLine("someone@example.com:AA:BB:CC:DD:EE:FF")
     assertTrue(errNoPipe ~= nil, "Missing pipe delimiter rejected")
 
     local _, errBadEmail = loader.parseAccountLine("bad-email|AA:BB:CC:DD:EE:FF:11112222333344445555666677778888:aaaabbbbccccddddeeeeffff00001111:VG9rZW4=")
     assertEq("Format email tidak valid", errBadEmail, "Malformed email rejected")
 
-    local _, errBadMac = loader.parseAccountLine("test@mail.com|AA:BB:CC:DD:EE:11112222333344445555666677778888:aaaabbbbccccddddeeeeffff00001111:VG9rZW4=")
+    local _, errBadMac = loader.parseAccountLine("test@example.com|AA:BB:CC:DD:EE:11112222333344445555666677778888:aaaabbbbccccddddeeeeffff00001111:VG9rZW4=")
     assertTrue(errBadMac ~= nil and errBadMac:find("MAC"), "Malformed MAC address rejected")
 
-    local _, errBadRid = loader.parseAccountLine("test@mail.com|AA:BB:CC:DD:EE:FF:SHORT_HEX:aaaabbbbccccddddeeeeffff00001111:VG9rZW4=")
+    local _, errBadRid = loader.parseAccountLine("test@example.com|AA:BB:CC:DD:EE:FF:SHORT_HEX:aaaabbbbccccddddeeeeffff00001111:VG9rZW4=")
     assertTrue(errBadRid ~= nil and errBadRid:find("RID"), "Short/invalid RID rejected")
 
-    local _, errBadWk = loader.parseAccountLine("test@mail.com|AA:BB:CC:DD:EE:FF:11112222333344445555666677778888:NOT_HEX_CHARS_AT_ALL_XXXX_YYYY:VG9rZW4=")
+    local _, errBadWk = loader.parseAccountLine("test@example.com|AA:BB:CC:DD:EE:FF:11112222333344445555666677778888:NOT_HEX_CHARS_AT_ALL_XXXX_YYYY:VG9rZW4=")
     assertTrue(errBadWk ~= nil and errBadWk:find("WK"), "Non-hex WK rejected")
 
-    local _, errEmptyToken = loader.parseAccountLine("test@mail.com|AA:BB:CC:DD:EE:FF:11112222333344445555666677778888:aaaabbbbccccddddeeeeffff00001111:")
+    local _, errEmptyToken = loader.parseAccountLine("test@example.com|AA:BB:CC:DD:EE:FF:11112222333344445555666677778888:aaaabbbbccccddddeeeeffff00001111:")
     assertTrue(errEmptyToken ~= nil, "Empty LTOKEN rejected")
 
-    local _, errBadB64Token = loader.parseAccountLine("test@mail.com|AA:BB:CC:DD:EE:FF:11112222333344445555666677778888:aaaabbbbccccddddeeeeffff00001111:====")
+    local _, errBadB64Token = loader.parseAccountLine("test@example.com|AA:BB:CC:DD:EE:FF:11112222333344445555666677778888:aaaabbbbccccddddeeeeffff00001111:====")
     assertTrue(errBadB64Token ~= nil and errBadB64Token:find("Base64"), "Invalid Base64 token (====) rejected")
 
     print("\n--- 6. Testing Zero Credential Leakage in Engine/Setup Exceptions ---")
-    local sensitiveToken = "U1VQRVJfU0VDUkVUX0xUT0tFTl9ET19OT1RfTEVBS19URVNUXzEyMw=="
+    local sensitiveToken = "U1VQRVJfU0VDUkVUX1NZTlRIRVRJQ19UT0tFTl9ERU1PXzEyMw=="
 
     -- 6A: Engine addBot exception throwing raw token
     simulateAddBotLeakException = true
-    local resEnginePanic = loader.processAccount("panic.test@gmail.com|AA:BB:CC:DD:EE:FF:11112222333344445555666677778888:aaaabbbbccccddddeeeeffff00001111:" .. sensitiveToken, 1)
+    local resEnginePanic = loader.processAccount("panic.test@example.com|AA:BB:CC:DD:EE:FF:11112222333344445555666677778888:aaaabbbbccccddddeeeeffff00001111:" .. sensitiveToken, 1)
     assertEq("FAILED_ADD", resEnginePanic.status, "Engine panic caught as FAILED_ADD")
     assertEq("ADD_EXCEPTION", resEnginePanic.reason, "Reason is constant ADD_EXCEPTION")
     simulateAddBotLeakException = false
 
     -- 6B: SetupBotCommon exception throwing raw token
     simulateSetupLeakException = true
-    local resSetupPanic = loader.processAccount("panic.setup@gmail.com|AA:BB:CC:DD:EE:FF:11112222333344445555666677778888:aaaabbbbccccddddeeeeffff00001111:" .. sensitiveToken, 2)
+    local resSetupPanic = loader.processAccount("panic.setup@example.com|AA:BB:CC:DD:EE:FF:11112222333344445555666677778888:aaaabbbbccccddddeeeeffff00001111:" .. sensitiveToken, 2)
     assertEq("FAILED_SETUP", resSetupPanic.status, "Setup panic caught as FAILED_SETUP")
     assertEq("SETUP_EXCEPTION", resSetupPanic.reason, "Reason is constant SETUP_EXCEPTION")
     simulateSetupLeakException = false
@@ -196,28 +212,58 @@ local function runTests()
     -- 6C: Check report does NOT leak sensitiveToken
     local mockResultsPanic = {
         total_lines = 2, added = 0, failed_parse = 0, failed_add = 1, failed_setup = 1, online_count = 0, connect_fail_count = 0,
+        storage_ok = true, storage_status = "OK",
         items = { resEnginePanic, resSetupPanic }
     }
     local panicReport = loader.formatSummaryReport(mockResultsPanic)
     assertTrue(not panicReport:find(sensitiveToken), "Summary report strictly NEVER contains sensitive token on exceptions")
     assertTrue(not panicReport:find("LEAK"), "Summary report does NOT contain exception internals")
 
-    print("\n--- 7. Testing AUTO_CONNECT & Connect Exception ---")
+    print("\n--- 7. Testing AUTO_CONNECT Edge Cases ---")
+    -- 7A: Connect socket exception
     loader.CONFIG.AUTO_CONNECT = true
     simulateConnectLeakException = true
-    local resConnPanic = loader.processAccount("panic.conn@gmail.com|AA:BB:CC:DD:EE:FF:11112222333344445555666677778888:aaaabbbbccccddddeeeeffff00001111:" .. sensitiveToken, 3)
+    local resConnPanic = loader.processAccount("conn.panic@example.com|AA:BB:CC:DD:EE:FF:11112222333344445555666677778888:aaaabbbbccccddddeeeeffff00001111:" .. sensitiveToken, 3)
     assertEq("ADDED", resConnPanic.status, "Account added despite connect exception")
     assertEq(false, resConnPanic.connect_ok, "connect_ok is false on connect exception")
+    assertEq("CONNECT_EXCEPTION", resConnPanic.connect_status, "connect_status reports CONNECT_EXCEPTION")
     simulateConnectLeakException = false
+
+    -- 7B: Missing connect method on targetBot
+    simulateMissingConnectMethod = true
+    local resMissingConn = loader.processAccount("missing.conn@example.com|AA:BB:CC:DD:EE:FF:11112222333344445555666677778888:aaaabbbbccccddddeeeeffff00001111:" .. sensitiveToken, 4)
+    assertEq("ADDED", resMissingConn.status, "Account added when connect method is missing")
+    assertEq(false, resMissingConn.connect_ok, "connect_ok is false when connect method missing")
+    assertEq("CONNECT_UNAVAILABLE", resMissingConn.connect_status, "connect_status reports CONNECT_UNAVAILABLE")
+    simulateMissingConnectMethod = false
     loader.CONFIG.AUTO_CONNECT = false
 
-    print("\n--- 8. Testing Batch Processing & Summary Report ---")
+    print("\n--- 8. Testing Status Property Read Exception Resilience ---")
+    -- Simulasi membaca bot.status melempar runtime exception
+    simulateStatusPanic = true
+    local resStatusPanic = loader.processAccount("panic.status@example.com|AA:BB:CC:DD:EE:FF:11112222333344445555666677778888:aaaabbbbccccddddeeeeffff00001111:" .. sensitiveToken, 5)
+    assertEq("ADDED", resStatusPanic.status, "Account added and survives status getter panic")
+    assertEq(false, resStatusPanic.is_online, "is_online defaults safely to false on getter error")
+    simulateStatusPanic = false
+
+    print("\n--- 9. Testing Storage Setup Failure Reporting ---")
+    loader.CONFIG.SEED_WORLD = "STORAGE_WORLD"
+    simulateStorageFail = true
+    local storageResults = loader.processAccounts("synthetic.alpha@example.com|11:22:33:AA:BB:CC:0123456789ABCDEF0123456789ABCDEF:FEDCBA9876543210FEDCBA9876543210:VGVzdFRva2Vu==\n")
+    assertEq(false, storageResults.storage_ok, "Storage failure is captured and reported (not swallowed)")
+    assertEq("STORAGE_ADD_EXCEPTION", storageResults.storage_status, "Storage failure status code is explicit")
+    local storageReport = loader.formatSummaryReport(storageResults)
+    assertTrue(storageReport:find("GAGAL") ~= nil, "Summary report explicitly notes Storage Setup GAGAL")
+    simulateStorageFail = false
+    loader.CONFIG.SEED_WORLD = ""
+
+    print("\n--- 10. Testing Batch Processing & Summary Report ---")
     local batchInput = [[
     -- Baris komentar ini harus diabaikan
-    robdaledonbraroseette@gmail.com|D6:88:91:BD:31:2B:F30FADD759D764B5A7462CAD2704DA06:ba340439688721424466a511bdfd5c71:Z0bYjfTAUb6REpPTJl/Fo6KKYlWjBUHFSJeMoCsrmjS7AOiotorq9B0NsXS7PKeyVdmSJMcDjaefgM0q1racZlcGRzhyeQ2bpX8AXBOBMa/2hAtsQ6TQrmT62DUR3yP1IM6QzW8yMQGR1ExkMIhKSRMEOQIsisnZ+3oMxtwPbmtjb+qlxr9YUtar8ooPjDMU8R4+FetWVGNkv5b8D7UB12LdJwg/NuZQ8JzVo8qxJI8MVsnsupCMfifqicCwlaq3mrfkl2kvH69veY+2naVFxc4nj/GQe8Sp8Jh/syLNDGkM0ZQvEN3NZK1Xfd52qShUUTWkqXgO1MfMGJgoUBrO8BEYLPnFjaly86BTNpeofIhqA8y+8O9v0zFncFf3OuQlR+UKJbAPweAb+36efN4TCTOl9LRQ5t8qhUZGshEAAKIMiPR9YzmPA0c9xGFTrF2WjwxjsFTRLB1/u1c96jIWsA==
+    synthetic.alpha@example.com|11:22:33:AA:BB:CC:0123456789ABCDEF0123456789ABCDEF:FEDCBA9876543210FEDCBA9876543210:VGVzdFN5bnRoZXRpY0Jhc2U2NFRva2VuRm9yVW5pdFRlc3RzT25seURvTm90VXNlMTIzNDU2Nzg5MA==
     corrupted_line_without_delimiter
-    emailonly@gmail.com
-    another.valid@sub2.example123.com|11:22:33:44:55:66:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb:VGVzdFRva2VuMTIz
+    emailonly@example.com
+    synthetic.beta@sub2.example123.com|AA:BB:CC:11:22:33:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb:VGVzdFRva2VuMTIz
     ]]
 
     local results = loader.processAccounts(batchInput)
@@ -230,7 +276,6 @@ local function runTests()
     assertTrue(report:find("Total Baris Diproses : 4") ~= nil, "Report displays total lines")
     assertTrue(report:find("Berhasil Ditambahkan : 2") ~= nil, "Report displays added count")
     assertTrue(report:find("Catatan: Ditambahkan != Terkonfirmasi Online") ~= nil, "Report notes Added != Online")
-    assertTrue(not report:find("Z0bYjf"), "Report NEVER contains raw token")
     print(report)
 
     print(string.format("\n=========================================="))
