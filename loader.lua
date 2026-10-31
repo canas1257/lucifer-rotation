@@ -23,7 +23,13 @@ local CONFIG = {
     HOME = { world = "MYHOME", door = "" },
 
     -- World storage untuk menyimpan seed & hasil item pack
-    STORAGE = { world = "MYSTORE", door = "" },
+    -- Mendukung pintu terpisah: 'doorseed' untuk seed dan 'doorpack' untuk pack
+    STORAGE = {
+        world = "MYSTORE",
+        doorseed = "DOORSEED", -- Pintu drop seed
+        doorpack = "DOORPACK", -- Pintu drop hasil beli pack
+        -- door = "",          -- Fallback jika doorseed/doorpack tidak diisi
+    },
 
     -- World untuk mengambil Pickaxe jika belum ada di tas saat start
     PICKAXE_WORLD = { world = "WORLDPICK", door = "" },

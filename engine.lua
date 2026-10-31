@@ -141,6 +141,37 @@ local function isAtWhiteDoor()
     return isAtDoor()
 end
 
+-- ========================================================
+-- HELPER STORAGE DESTINATION (DOORSEED & DOORPACK)
+-- Mendukung pintu terpisah:
+-- STORAGE = { world = "world", doorseed = "door", doorpack = "door" }
+-- ========================================================
+local function getStorageDest(storageType)
+    local cfg = CONFIG.STORAGE
+    if type(cfg) == "string" then
+        return { world = cfg, door = "" }
+    end
+    if type(cfg) ~= "table" then
+        return { world = "", door = "" }
+    end
+
+    local world = cfg.world or ""
+    local door = cfg.door or ""
+
+    if storageType == "seed" then
+        local doorSeed = cfg.doorseed or cfg.doorSeed or cfg.door_seed or cfg.door
+        return { world = world, door = doorSeed or "" }
+    elseif storageType == "pack" then
+        local doorPack = cfg.doorpack or cfg.doorPack or cfg.door_pack or cfg.door
+        return { world = world, door = doorPack or "" }
+    end
+
+    return { world = world, door = door }
+end
+
+local lastWarpWorld = ""
+local lastWarpDoor = ""
+
 local function warp(dest)
     bot.auto_collect = false -- Matikan auto_collect setiap kali berpindah world
     local world = type(dest) == "table" and dest.world or dest
@@ -148,24 +179,34 @@ local function warp(dest)
     local upperWorld = type(world) == "string" and world:upper() or world
 
     if not waitOnline() then return false end
+
+    -- Jika bot sudah berada di world yang sama
     if (bot:isInWorld(world) or bot:isInWorld(upperWorld)) and bot:isInWorld() then
-        if isAtWhiteDoor() and door ~= "" then
+        -- Jika ada target door berbeda di world yang sama (misal pindah dari doorseed ke doorpack)
+        if door ~= "" and (lastWarpDoor ~= door or isAtDoor()) then
+            print(string.format("[Warp] Berada di world %s, pindah ke door '%s'...", tostring(world), tostring(door)))
             bot:warp(world, door)
             sleep(1000)
+            lastWarpDoor = door
+            return true
         end
         return true
     end
 
     bot:warp(world, door)
+    lastWarpWorld = world
+    lastWarpDoor = door
+
     -- Polling setiap 500ms agar begitu subserver transfer selesai bot langsung bergerak (rata-rata 1.5 - 2.5 detik)
     for _ = 1, 40 do
         sleep(500)
         if (bot:isInWorld(world) or bot:isInWorld(upperWorld)) and bot:isInWorld() then
             sleep(600) -- jeda settling streaming tile
-            if isAtWhiteDoor() and door ~= "" then
+            if isAtDoor() and door ~= "" then
                 bot:warp(world, door)
                 sleep(600)
             end
+            lastWarpDoor = door
             return true
         end
         if not waitOnline(3) then return false end
@@ -948,15 +989,10 @@ local function doBreakHome(dest)
             bot.auto_collect = false
             print(string.format("[Home] Seed di tas mencapai %d (> 190). Menyimpan 100 seed ke storage...", bot:getInventory():findItem(CONFIG.SEED_ID)))
             updateWebhook("Menyimpan 100 Seed ke Storage (Tas Penuh)", farmName)
-            if warp(CONFIG.STORAGE) then
+            local seedStorage = getStorageDest("seed")
+            if warp(seedStorage) then
                 local dropX = bot.x + 1
                 local dropY = bot.y
-                local packCfg = CONFIG.AUTO_BUY_PACK
-                if packCfg and packCfg.DropPlacement and type(packCfg.DropPlacement) == "number" and packCfg.DropPlacement > 100 then
-                    dropX = packCfg.DropPlacement % 100
-                    dropY = math.floor(packCfg.DropPlacement / 100)
-                end
-
                 smartDrop(CONFIG.SEED_ID, 100, dropX, dropY, 1000)
             end
             warp(CONFIG.HOME)
@@ -1021,9 +1057,10 @@ local function doBuyPack(dest)
             end
 
             if boughtCount > 0 or hasPackItems then
-                print("[AutoBuy] Langsung menuju world storage untuk drop item pack...")
+                print("[AutoBuy] Langsung menuju world storage pack untuk drop item pack...")
                 updateWebhook("Drop Item Pack ke Storage", farmName)
-                if warp(CONFIG.STORAGE) then
+                local packStorage = getStorageDest("pack")
+                if warp(packStorage) then
                     local sx = bot.x + 1
                     local sy = bot.y
                     if packCfg.DropPlacement and type(packCfg.DropPlacement) == "number" and packCfg.DropPlacement > 100 then
@@ -1050,11 +1087,11 @@ end
 local function doStore(dest)
     local farmName = type(dest) == "table" and dest.world or dest
     local inv = bot:getInventory()
-    local seeds = inv:findItem(CONFIG.SEED_ID)
+    local seeds = inv and inv:findItem(CONFIG.SEED_ID) or 0
     local packCfg = CONFIG.AUTO_BUY_PACK
 
     local hasPackItems = false
-    if packCfg and packCfg.ENABLED and packCfg.ItemIDOfPack then
+    if packCfg and packCfg.ENABLED and packCfg.ItemIDOfPack and inv then
         for _, id in ipairs(packCfg.ItemIDOfPack) do
             if inv:findItem(id) > 0 then
                 hasPackItems = true
@@ -1066,32 +1103,39 @@ local function doStore(dest)
     local seedOver190 = (seeds > 190)
     local needStoreSeed = seedOver190 or (seeds >= (CONFIG.STORE_SEED_MIN or 100))
 
-    if needStoreSeed or hasPackItems then
-        updateWebhook("Menyimpan Seed & Drop Item Pack ke Storage", farmName)
-        if warp(CONFIG.STORAGE) then
+    -- 1. Drop Seed ke Storage Seed (doorseed)
+    if needStoreSeed then
+        local seedStorage = getStorageDest("seed")
+        updateWebhook("Menyimpan Seed ke Storage", farmName)
+        print(string.format("[Storage] Menuju storage seed: %s (Door: '%s')...", seedStorage.world, tostring(seedStorage.door or "")))
+        if warp(seedStorage) then
             local sx = bot.x + 1
             local sy = bot.y
-            if packCfg and packCfg.DropPlacement and type(packCfg.DropPlacement) == "number" and packCfg.DropPlacement > 100 then
+            local dropCount = seedOver190 and 100 or seeds
+            print(string.format("[Storage] Menyimpan %d seed ke storage (sisa di tas: %d)...", dropCount, seeds - dropCount))
+            smartDrop(CONFIG.SEED_ID, dropCount, sx, sy, 1000)
+        end
+    end
+
+    -- 2. Drop Item Hasil Beli Pack ke Storage Pack (doorpack)
+    if hasPackItems and packCfg then
+        local packStorage = getStorageDest("pack")
+        updateWebhook("Drop Item Pack ke Storage", farmName)
+        print(string.format("[Storage] Menuju storage pack: %s (Door: '%s')...", packStorage.world, tostring(packStorage.door or "")))
+        if warp(packStorage) then
+            local sx = bot.x + 1
+            local sy = bot.y
+            if packCfg.DropPlacement and type(packCfg.DropPlacement) == "number" and packCfg.DropPlacement > 100 then
                 sx = packCfg.DropPlacement % 100
                 sy = math.floor(packCfg.DropPlacement / 100)
             end
 
-            -- 1. Drop Seed: jika > 190, drop 100 dan sisakan sisanya untuk di-plant
-            if needStoreSeed then
-                local dropCount = seedOver190 and 100 or seeds
-                print(string.format("[Storage] Menyimpan %d seed ke storage (sisa di tas: %d)...", dropCount, seeds - dropCount))
-                smartDrop(CONFIG.SEED_ID, dropCount, sx, sy, 1000)
-            end
-
-            -- 2. Drop Item Hasil Beli Pack
-            if hasPackItems and packCfg then
-                local delayFP = packCfg.DelayFPDrop or 1000
-                for _, itemId in ipairs(packCfg.ItemIDOfPack) do
-                    local count = bot:getInventory():findItem(itemId)
-                    if count > 0 then
-                        print(string.format("[Storage] Menjatuhkan %d unit item [ID %d]...", count, itemId))
-                        smartDrop(itemId, count, sx, sy, delayFP)
-                    end
+            local delayFP = packCfg.DelayFPDrop or 1000
+            for _, itemId in ipairs(packCfg.ItemIDOfPack) do
+                local count = bot:getInventory():findItem(itemId)
+                if count > 0 then
+                    print(string.format("[Storage] Menjatuhkan %d unit item [ID %d]...", count, itemId))
+                    smartDrop(itemId, count, sx, sy, delayFP)
                 end
             end
         end
