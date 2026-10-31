@@ -114,11 +114,31 @@ local function waitOnline(timeout)
     return false
 end
 
-local function isAtWhiteDoor()
+local function isAtDoor()
     local world = bot:getWorld()
     if not world then return false end
     local tile = world:getTile(bot.x, bot.y)
-    return tile ~= nil and tile.fg == 6
+    if not tile then return false end
+    local fg = tile.fg
+    -- 6 = White Door (Exit), 8 = Wooden Door (ID Door), 382 = Portcullis, 694 = Castle Door, 4992 = Dungeon Door, 100 = House Entrance
+    if fg == 6 or fg == 8 or fg == 382 or fg == 694 or fg == 4992 or fg == 100 then
+        return true
+    end
+    if tile.hasExtra and tile:hasExtra() then
+        local extra = tile:getExtra()
+        if extra and (extra.label ~= nil or extra.destination ~= nil) then
+            return true
+        end
+    end
+    -- Jika bot berada di baris paling atas spawn (y <= 0)
+    if bot.y <= 0 then
+        return true
+    end
+    return false
+end
+
+local function isAtWhiteDoor()
+    return isAtDoor()
 end
 
 local function warp(dest)
@@ -178,17 +198,19 @@ local function reconnectGuard(dest, targetX, targetY)
         warp({ world = world, door = door })
     end
 
-    -- 3. Cek apakah bot berada di White Door (ID 6)
-    if isAtWhiteDoor() then
-        print(string.format("[Guard] Terdeteksi di White Door (ID 6). Re-warp ke door '%s'...", door))
-        if door ~= "" then
+    -- 3. Cek apakah bot berada di Pintu (White Door ID 6 / ID Door ID 8 / Spawn)
+    if isAtDoor() then
+        local curTile = bot:getWorld() and bot:getWorld():getTile(bot.x, bot.y)
+        local curFg = curTile and curTile.fg or 0
+        if curFg == 6 and door ~= "" then
+            print(string.format("[Guard] Terdeteksi di White Door (ID 6). Re-warp ke door '%s'...", door))
             bot:warp(world, door)
             sleep(600)
         end
 
-        -- Berjalan kembali ke koordinat target (x, y) hanya saat pemulihan dari White Door
+        -- Berjalan kembali ke koordinat target (x, y) dari pintu
         if targetX and targetY and bot:getWorld() and bot:getWorld():isValidTile(targetX, targetY) then
-            print(string.format("[Guard] Berjalan dari White Door kembali ke posisi target (%d, %d)...", targetX, targetY))
+            print(string.format("[Guard] Berjalan dari pintu (%d, %d) kembali ke target (%d, %d)...", bot.x, bot.y, targetX, targetY))
             bot:findPath(targetX, targetY)
             sleep(400)
         end
@@ -800,11 +822,9 @@ local function doBreakHome(dest)
         print(string.format("[Home] Sukses tiba di spot: Berdiri (%d, %d)", standX, standY))
     end
 
-    -- Jika posisi berdiri asli berada di White Door (ID 6), re-warp dan cari spot random baru
-    if isAtWhiteDoor() then
-        print(string.format("[Home] Terdeteksi di White Door (ID 6). Re-warp ke '%s:%s' dan scan lokasi baru...", homeWorld, homeDoor))
-        if homeDoor ~= "" then bot:warp(homeWorld, homeDoor) else bot:warp(homeWorld) end
-        sleep(600)
+    -- Jika posisi berdiri asli berada di Pintu (White Door ID 6 / ID Door ID 8 / y <= 0), cari spot random baru
+    if isAtDoor() or standY < 2 then
+        print(string.format("[Home] Terdeteksi di Pintu / Spawn (%d, %d). Mencari spot break random yang aman di Y [5 - 45]...", standX, standY))
         local rx, ry = findBreakSpot()
         bot:findPath(rx, ry)
         sleep(400)
@@ -822,77 +842,106 @@ local function doBreakHome(dest)
     local maxHits = CONFIG.PUNCH_RETRY_MAX or 15
     local placeDelay = (intervals.place or 0.16) * 1000
     local hitDelay = (intervals.hit or 0.18) * 1000
+    local lastBlockCount = blocks
+    local stuckCycles = 0
 
     while waitOnline() do
         local inv = bot:getInventory()
-        if not inv or inv:findItem(CONFIG.BLOCK_ID) == 0 then
+        local currentBlocks = inv and inv:findItem(CONFIG.BLOCK_ID) or 0
+        if currentBlocks == 0 then
             print("[Home] Seluruh blok di tas sudah selesai dipecahkan!")
             break
         end
 
-        -- Proteksi reconnect & recovery White Door langsung ke posisi kerja
+        -- Proteksi reconnect & recovery pintu langsung ke posisi kerja
         reconnectGuard(CONFIG.HOME, standX, standY)
 
-        -- Selalu ambil posisi BERDIRI ASLI bot saat ini secara dinamis
+        -- Sesuai arahan Bos Anas: Jika bot terlempar / berada di Pintu (White Door 6 / ID Door 8 pada 97,0),
+        -- atau bot tergeser dari spot kerja, bot otomatis kembali ke spot break atau cari spot baru di Y 5 - Y 45!
+        if isAtDoor() or bot.y < 2 or not bot:isInTile(standX, standY) then
+            print(string.format("[Home] Bot terdeteksi di (%d, %d), bukan di spot break. Kembali ke (%d, %d)...",
+                bot.x, bot.y, standX, standY))
+            local pathSuccess = bot:findPath(standX, standY)
+            sleep(400)
+
+            -- Jika spot lama terhalang atau bot masih di pintu (seperti di 97,0)
+            if not pathSuccess or isAtDoor() or bot.y < 2 then
+                print("[Home] Spot lama terhalang / bot masih di pintu. Memindai spot break baru di Y [5 - 45]...")
+                local newX, newY = findBreakSpot()
+                print(string.format("[Home] Spot break baru terpilih: (%d, %d). Berjalan ke lokasi...", newX, newY))
+                bot:findPath(newX, newY)
+                sleep(400)
+                standX, standY = bot.x, bot.y
+            end
+        end
+
+        -- Posisi berdiri kerja bot
         local curX, curY = bot.x, bot.y
 
-        -- Sesuai arahan Bos Anas: Jika bot terlempar atau berdiri di White Door (ID 6),
-        -- bot otomatis warp(world, id) dan mencari lokasi break baru secara random
-        if isAtWhiteDoor() then
-            print(string.format("[Home] Bot terlempar/berdiri di White Door (ID 6)! Otomatis re-warp ke '%s:%s'...", homeWorld, homeDoor))
-            if homeDoor ~= "" then
-                bot:warp(homeWorld, homeDoor)
-                sleep(800)
-            else
-                bot:warp(homeWorld)
-                sleep(800)
-            end
+        -- Pengaman mutlak: Jangan pernah meletakkan blok jika bot masih berada di y < 2 (misal di baris atas / pintu)
+        if curY >= 2 and not isAtDoor() then
+            local world = bot:getWorld()
+            if not world then break end
 
-            print("[Home] Memindai world kembali untuk mencari lokasi break kosong secara random...")
-            local newX, newY = findBreakSpot()
-            print(string.format("[Home] Spot break baru terpilih: (%d, %d). Berjalan ke lokasi baru...", newX, newY))
-            bot:findPath(newX, newY)
-            sleep(400)
-            standX, standY = bot.x, bot.y
-            curX, curY = bot.x, bot.y
-            print(string.format("[Home] Melanjutkan break di posisi baru: (%d, %d)", curX, curY))
-        end
-
-        local world = bot:getWorld()
-        if not world then break end
-
-        -- 1. Letakkan hingga 3 blok tepat di atas kepala posisi ASLI bot
-        for _, off in ipairs(targetOffsets) do
-            local tx = curX + off.dx
-            local ty = curY + off.dy
-            local target = world:getTile(tx, ty)
-            if target and target.fg == 0 and bot:getInventory():findItem(CONFIG.BLOCK_ID) > 0 then
-                bot:place(tx, ty, CONFIG.BLOCK_ID)
-                sleep(placeDelay)
-            end
-        end
-
-        -- 2. Pukul ketiga blok sampai hancur relatif terhadap posisi ASLI bot
-        local totalHits = 0
-        while waitOnline() and totalHits < (maxHits * 3) do
-            if isAtWhiteDoor() then break end
-
-            local anyBlock = false
+            -- 1. Letakkan hingga 3 blok tepat di atas kepala posisi bot
             for _, off in ipairs(targetOffsets) do
                 local tx = curX + off.dx
                 local ty = curY + off.dy
-                local cur = bot:getWorld():getTile(tx, ty)
-                if cur and cur.fg ~= 0 then
-                    anyBlock = true
-                    bot:hit(tx, ty)
-                    totalHits = totalHits + 1
-                    sleep(hitDelay)
+                if ty > 0 and ty < world.y then
+                    local target = world:getTile(tx, ty)
+                    if target and target.fg == 0 and bot:getInventory():findItem(CONFIG.BLOCK_ID) > 0 then
+                        bot:place(tx, ty, CONFIG.BLOCK_ID)
+                        sleep(placeDelay)
+                    end
                 end
             end
 
-            if not anyBlock then break end
+            -- 2. Pukul ketiga blok sampai hancur relatif terhadap posisi bot
+            local totalHits = 0
+            while waitOnline() and totalHits < (maxHits * 3) do
+                if isAtDoor() then break end
+
+                local anyBlock = false
+                for _, off in ipairs(targetOffsets) do
+                    local tx = curX + off.dx
+                    local ty = curY + off.dy
+                    if ty > 0 and ty < world.y then
+                        local cur = bot:getWorld():getTile(tx, ty)
+                        if cur and cur.fg ~= 0 then
+                            anyBlock = true
+                            bot:hit(tx, ty)
+                            totalHits = totalHits + 1
+                            sleep(hitDelay)
+                        end
+                    end
+                end
+
+                if not anyBlock then break end
+            end
+            bot:collect(3)
+
+            -- Log progres pemecahan blok berkala & anti-stuck detector
+            local newBlocks = bot:getInventory():findItem(CONFIG.BLOCK_ID)
+            if newBlocks ~= lastBlockCount then
+                if (lastBlockCount - newBlocks) >= 9 or newBlocks <= 10 then
+                    print(string.format("[Home] Sedang memecahkan blok... Sisa di tas: %d blok", newBlocks))
+                end
+                lastBlockCount = newBlocks
+                stuckCycles = 0
+            else
+                stuckCycles = stuckCycles + 1
+                if stuckCycles >= 4 then
+                    print("[Home] Peringatan: Blok tidak berkurang setelah 4 siklus. Memilih spot break baru di Y [5 - 45]...")
+                    local altX, altY = findBreakSpot()
+                    bot:findPath(altX, altY)
+                    sleep(400)
+                    standX, standY = bot.x, bot.y
+                    stuckCycles = 0
+                end
+            end
+        else
+            sleep(500)
         end
-        bot:collect(3)
 
         -- 3. Cek overflow seed saat break (> 190 drop 100 ke storage)
         if bot:getInventory():findItem(CONFIG.SEED_ID) > 190 then
