@@ -169,11 +169,20 @@ local function getStorageDest(storageType)
     return { world = world, door = door }
 end
 
+-- ========================================================
+-- HELPER PENGATURAN COLLECT & RANGE
+-- Membatasi jarak auto_collect agar tetap 2 blok dari bot
+-- ========================================================
+local function Collect(state, range)
+    bot.auto_collect = state and true or false
+    bot.collect_range = range or 2
+end
+
 local lastWarpWorld = ""
 local lastWarpDoor = ""
 
 local function warp(dest)
-    bot.auto_collect = false -- Matikan auto_collect setiap kali berpindah world
+    Collect(false) -- Matikan auto_collect setiap kali berpindah world
     local world = type(dest) == "table" and dest.world or dest
     local door = type(dest) == "table" and (dest.door or "") or ""
     local upperWorld = type(world) == "string" and world:upper() or world
@@ -671,7 +680,7 @@ end
 -- STATE HANDLERS
 -- ========================================================
 local function doHarvest(dest)
-    bot.auto_collect = false
+    Collect(false)
     local farmName = type(dest) == "table" and dest.world or dest
     updateWebhook("Memanen Pohon (Harvest)", farmName)
 
@@ -873,7 +882,8 @@ local function doBreakHome(dest)
         print(string.format("[Home] Posisi berdiri aman terbaru: (%d, %d)", standX, standY))
     end
 
-    bot.auto_collect = true
+    -- Sesuai arahan Bos Anas: Aktifkan auto_collect dengan jangkauan tepat 2 blok
+    Collect(true, 2)
 
     local targetOffsets = {
         { dx = 0, dy = -1 },
@@ -959,7 +969,7 @@ local function doBreakHome(dest)
 
                 if not anyBlock then break end
             end
-            bot:collect(3)
+            bot:collect(2) -- Jangkauan collect tepat 2 blok
 
             -- Log progres pemecahan blok berkala & anti-stuck detector
             local newBlocks = bot:getInventory():findItem(CONFIG.BLOCK_ID)
@@ -986,7 +996,7 @@ local function doBreakHome(dest)
 
         -- 3. Cek overflow seed saat break (> 190 drop 100 ke storage)
         if bot:getInventory():findItem(CONFIG.SEED_ID) > 190 then
-            bot.auto_collect = false
+            Collect(false)
             print(string.format("[Home] Seed di tas mencapai %d (> 190). Menyimpan 100 seed ke storage...", bot:getInventory():findItem(CONFIG.SEED_ID)))
             updateWebhook("Menyimpan 100 Seed ke Storage (Tas Penuh)", farmName)
             local seedStorage = getStorageDest("seed")
@@ -999,11 +1009,11 @@ local function doBreakHome(dest)
             bot:findPath(standX, standY)
             sleep(400)
             standX, standY = bot.x, bot.y
-            bot.auto_collect = true
+            Collect(true, 2)
         end
     end
 
-    bot.auto_collect = false
+    Collect(false)
 
     -- 4. Auto-Trash sampah setelah selesai break di Home
     doAutoTrash(farmName)
@@ -1149,7 +1159,7 @@ local function doStore(dest)
 end
 
 local function doPlant(dest)
-    bot.auto_collect = false
+    Collect(false)
     local farmName = type(dest) == "table" and dest.world or dest
     local seeds = bot:getInventory():findItem(CONFIG.SEED_ID)
     if seeds == 0 then return STATE.HARVEST end
