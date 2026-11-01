@@ -1,20 +1,15 @@
 -- ==============================================================================
--- SCRIPT BOT LUCIFER v2.86: WORLD SCANNER & PLANT CHECKER
--- Pembuat: Salsa (untuk Bos Anas)
--- Deskripsi:
--- Keliling daftar world untuk cek kondisi:
--- 1. Deteksi world Nuked / Inaccessible.
--- 2. Jika aman (tidak nuked), scan ada pohon/tanaman atau tidak (Ready & Growing).
--- 3. Catat seluruh hasil ke file .txt (Nuked, Ada Tanaman, Kosong, & Laporan Lengkap).
+-- SCRIPT BOT LUCIFER v2.86: WORLD SCANNER & PLANT CHECKER (REVISED v2)
+-- Pembuat: Salsa (Kolaborasi & Review: Anna @anna)
 -- ==============================================================================
 
 local CONFIG = {
     -- Sumber daftar world:
-    -- Jika file WORLD_LIST_FILE ada, bot akan membaca baris dari file tersebut.
-    -- Jika file kosong / tidak ditemukan, bot akan memakai daftar WORLDS di bawah.
+    -- Jika file ini ada dan berisi baris, bot akan membacanya.
+    -- Jika tidak ada / kosong, bot memakai tabel WORLDS di bawah.
     WORLD_LIST_FILE = "world_list.txt",
 
-    -- Daftar world manual (Fallback jika tidak menggunakan file):
+    -- Daftar world fallback jika tidak pakai file luar:
     -- Format: "NAMA_WORLD" atau "NAMA_WORLD|DOOR_ID"
     WORLDS = {
         "FARMKU1",
@@ -22,31 +17,38 @@ local CONFIG = {
         "FARMKU3",
     },
 
-    -- ID Seed target spesifik (opsional):
-    -- 0 = Cek SEMUA jenis tanaman/pohon secara otomatis
+    -- ID Seed target spesifik:
+    -- 0 = Cek SEMUA jenis tanaman/pohon
     -- > 0 = Hanya hitung tanaman dari Seed ID tertentu (contoh: 4585 untuk Pepper Tree)
     TARGET_SEED_ID = 0,
 
+    -- Hanya cek pohon siap panen (abaikan bibit yang masih tumbuh):
+    -- true  = Hanya hitung pohon yang canHarvest()
+    -- false = Hitung pohon siap panen DAN bibit yang sedang tumbuh
+    READY_ONLY = false,
+
     -- Pengaturan Waktu & Jeda:
-    WARP_DELAY = 1200,      -- Jeda settling streaming tile pasca-warp (ms)
-    WARP_TIMEOUT = 7,       -- Batas maksimal menunggu masuk world (detik)
-    NEXT_WORLD_DELAY = 1000,-- Jeda sebelum lanjut ke world berikutnya (ms)
+    WARP_DELAY = 1500,       -- Jeda tunggu data tile selesai streaming pasca-warp (ms)
+    WARP_TIMEOUT = 8,        -- Batas maksimal menunggu masuk world (detik)
+    MAX_RECONNECT_WAIT = 60, -- Batas maksimal menunggu bot online saat disconnect (detik)
+    NEXT_WORLD_DELAY = 1000, -- Jeda sebelum lanjut ke world berikutnya (ms)
 
     -- Mode Putaran (Looping):
-    -- true  = Bot keliling terus-menerus tanpa henti (setelah world terakhir, ulang dari awal)
+    -- true  = Bot keliling terus-menerus tanpa henti
     -- false = Bot hanya cek 1 kali keliling daftar world lalu selesai
     LOOP_MODE = false,
-    LOOP_INTERVAL = 60,     -- Jeda istirahat antar putaran jika LOOP_MODE = true (detik)
+    LOOP_INTERVAL = 60,      -- Jeda antar putaran jika LOOP_MODE = true (detik)
 
     -- File Output TXT:
     OUTPUT = {
-        NUKED      = "worlds_nuked.txt",       -- Daftar world yang terkena NUKED / Inaccessible
-        HAS_PLANT  = "worlds_has_plant.txt",   -- Daftar world yang ADA tanaman
-        EMPTY      = "worlds_empty.txt",       -- Daftar world yang KOSONG (tidak ada tanaman)
-        REPORT     = "worlds_scan_report.txt", -- Rekap detail lengkap dengan timestamp & statistik
+        NUKED      = "worlds_nuked.txt",       -- HANYA world yang terkonfirmasi NUKED / Inaccessible
+        HAS_PLANT  = "worlds_has_plant.txt",   -- World yang ADA tanaman
+        EMPTY      = "worlds_empty.txt",       -- World yang terkonfirmasi KOSONG (0 tanaman)
+        FAILED     = "worlds_failed.txt",      -- World yang gagal warp / gagal scan (lag/dc)
+        REPORT     = "worlds_scan_report.txt", -- Rekap detail keseluruhan dengan timestamp
     },
 
-    -- Discord Webhook (Opsional untuk pantau hasil scan):
+    -- Discord Webhook (Opsional untuk monitoring):
     WEBHOOK = {
         ENABLED = false,
         URL = "https://discord.com/api/webhooks/...",
@@ -54,7 +56,7 @@ local CONFIG = {
 }
 
 -- ==============================================================================
--- INISIALISASI BOT & VALIDASI LINGKUNGAN
+-- INISIALISASI BOT
 -- ==============================================================================
 local bot = getBot()
 if not bot then
@@ -62,14 +64,15 @@ if not bot then
     return
 end
 
-bot.leave_world_before_warp = false -- Direct seamless warp tanpa putus ke menu utama
+bot.leave_world_before_warp = false
 
--- State global listener nuked
-local isNukedSignal = false
-local lastSignalReason = ""
+-- State tracking event respon server
+local isNukedConfirmed = false
+local nukeReasonText = ""
+local isServerMaintenance = false
 
 -- ==============================================================================
--- HELPER FILESYSTEM & LOGGING
+-- HELPER FILESYSTEM & LOGGING (DENGAN PENGECEKAN RETURN LENGKAP)
 -- ==============================================================================
 local function getTimestamp()
     if os and os.date then
@@ -79,29 +82,45 @@ local function getTimestamp()
 end
 
 local function appendToFile(path, text)
-    if not path or path == "" then return end
-    -- Coba fungsi native Lucifer v2.86
+    if not path or path == "" then return false end
+
+    -- 1. Coba fungsi native Lucifer v2.86 (periksa hasil pcall DAN nilai kembalian boolean)
     if type(append) == "function" then
-        local ok = pcall(append, path, text .. "\n")
-        if ok then return end
-    end
-    -- Fallback I/O standar Lua
-    if io and io.open then
-        local f = io.open(path, "a")
-        if f then
-            f:write(text .. "\n")
-            f:close()
+        local ok, result = pcall(append, path, text .. "\n")
+        if ok and result == true then
+            return true
         end
     end
+
+    -- 2. Fallback I/O standar Lua dengan pengecekan handle & write
+    if io and io.open then
+        local f, err = io.open(path, "a")
+        if f then
+            local writeOk = f:write(text .. "\n")
+            f:close()
+            if writeOk then
+                return true
+            end
+        else
+            print(string.format("[Error] Gagal membuka file '%s': %s", tostring(path), tostring(err or "unknown")))
+        end
+    end
+
+    print(string.format("[Error] Gagal menulis ke file '%s' via append maupun io.open!", tostring(path)))
+    return false
 end
 
 local function readFileLines(path)
     local lines = {}
     local raw = ""
+
     if type(read) == "function" then
         local ok, res = pcall(read, path)
-        if ok and res then raw = res end
+        if ok and res and type(res) == "string" then
+            raw = res
+        end
     end
+
     if raw == "" and io and io.open then
         local f = io.open(path, "r")
         if f then
@@ -109,6 +128,7 @@ local function readFileLines(path)
             f:close()
         end
     end
+
     if raw ~= "" then
         for line in raw:gmatch("[^\r\n]+") do
             local clean = line:match("^%s*(.-)%s*$")
@@ -133,7 +153,7 @@ local function parseWorldEntry(entry)
 end
 
 -- ==============================================================================
--- WEBHOOK NOTIFIKASI (OPSIONAL)
+-- WEBHOOK NOTIFIKASI
 -- ==============================================================================
 local function sendWebhookNotification(title, desc, color)
     local cfg = CONFIG.WEBHOOK
@@ -154,47 +174,65 @@ local function sendWebhookNotification(title, desc, color)
 end
 
 -- ==============================================================================
--- EVENT LISTENER (DETEKSI SINYAL NUKED / INACCESSIBLE DARI SERVER)
+-- EVENT LISTENER (FILTER PESAN KETAT UNTUK DETEKSI NUKED)
 -- ==============================================================================
-local function checkMessageForNuke(msg)
+local function inspectServerMessage(msg)
     if not msg then return end
     local clean = type(removeColor) == "function" and removeColor(msg) or msg
     clean = tostring(clean):lower()
 
-    if clean:find("inaccessible") or clean:find("nuked") or clean:find("banned") or clean:find("maintenance") then
-        isNukedSignal = true
-        lastSignalReason = clean
+    -- 1. Deteksi Server Maintenance (BUKAN Nuked!)
+    if clean:find("maintenance") or clean:find("server is being updated") then
+        isServerMaintenance = true
+        return
+    end
+
+    -- 2. Deteksi Pesan Nuke / Inaccessible Khusus World
+    -- Pola resmi Growtopia server: "That world is inaccessible", "World is inaccessible", "nuked"
+    if clean:find("is inaccessible") or clean:find("inaccessible, try another") or clean:find("world is inaccessible") or clean:find("world is nuked") or clean:find("has been nuked") then
+        isNukedConfirmed = true
+        nukeReasonText = clean
     end
 end
 
 if type(addEvent) == "function" and type(Event) == "table" then
     if Event.game_message then
-        addEvent(Event.game_message, checkMessageForNuke)
+        addEvent(Event.game_message, inspectServerMessage)
     end
     if Event.generic_text then
-        addEvent(Event.generic_text, checkMessageForNuke)
+        addEvent(Event.generic_text, inspectServerMessage)
     end
 end
 
 -- ==============================================================================
--- HELPER KONEKSI & KEDATANGAN WORLD
+-- HELPER KONEKSI & RECONNECT GUARD (TERUKUR / BOUNDED)
 -- ==============================================================================
 local function waitOnline(maxSec)
-    local limit = maxSec or 30
+    local limit = maxSec or CONFIG.MAX_RECONNECT_WAIT
     for _ = 1, limit do
-        if bot.status == BotStatus.online then return true end
+        if bot.status == BotStatus.online then
+            return true
+        end
+        -- Deteksi status terminal yang tidak bisa ditunggu
+        if bot.status == BotStatus.account_banned or bot.status == BotStatus.location_banned or bot.status == BotStatus.account_suspended then
+            print(string.format("[FATAL] Bot terkena sanksi (%s)! Script dihentikan.", tostring(bot.status)))
+            return false
+        end
         sleep(1000)
     end
     return false
 end
 
--- Warp aman dengan signature strict Lucifer v2.86 (tanpa argumen kosong "")
-local function safeWarp(worldName, doorId)
-    isNukedSignal = false
-    lastSignalReason = ""
+-- ==============================================================================
+-- WARP DENGAN PUMPING EVENT AKTIF & KLASIFIKASI KETAT
+-- ==============================================================================
+local function executeWarp(worldName, doorId)
+    isNukedConfirmed = false
+    nukeReasonText = ""
+    isServerMaintenance = false
 
     if not waitOnline(10) then
-        return false, "bot_offline"
+        return false, "BOT_OFFLINE"
     end
 
     local upperTarget = worldName:upper()
@@ -206,87 +244,113 @@ local function safeWarp(worldName, doorId)
         bot:warp(upperTarget)
     end
 
-    -- Polling kedatangan
-    local loops = math.floor(CONFIG.WARP_TIMEOUT * 2)
-    for _ = 1, loops do
-        sleep(500)
+    local elapsed = 0
+    local pollStep = 0.5
+    local maxWait = CONFIG.WARP_TIMEOUT
 
-        -- Cek respon server jika ada pesan nuked
-        if isNukedSignal then
-            return false, "nuked_signal"
+    while elapsed < maxWait do
+        -- Pompa event selama 0.5 detik agar callback addEvent aktif memproses packet
+        if type(listenEvents) == "function" then
+            listenEvents(pollStep)
+        else
+            sleep(math.floor(pollStep * 1000))
+        end
+        elapsed = elapsed + pollStep
+
+        -- 1. Evaluasi konfirmasi nuke dari respons server
+        if isNukedConfirmed then
+            return false, "CONFIRMED_NUKED"
         end
 
-        -- Cek status bot
-        if bot.status == BotStatus.could_not_warp then
-            return false, "could_not_warp"
+        -- 2. Evaluasi server maintenance
+        if isServerMaintenance then
+            return false, "SERVER_MAINTENANCE"
         end
 
-        -- Cek apakah sudah mendarat di world
+        -- 3. Cek kedatangan bot di world target
         if (bot:isInWorld(upperTarget) or bot:isInWorld(worldName)) and bot:isInWorld() then
-            sleep(CONFIG.WARP_DELAY) -- Jeda settling streaming tile
-            return true, "success"
+            sleep(CONFIG.WARP_DELAY) -- Jeda streaming tile selesai
+            return true, "SUCCESS"
         end
 
-        if not waitOnline(2) then
-            return false, "disconnect"
+        -- 4. Re-check online
+        if bot.status ~= BotStatus.online then
+            return false, "DISCONNECT"
         end
     end
 
-    return false, "timeout"
+    -- Jika timeout tetapi TIDAK ada pesan server konfirmasi nuke
+    return false, "WARP_TIMEOUT"
 end
 
 -- ==============================================================================
--- SCANNER TANAMAN PADA WORLD
+-- SCANNER TANAMAN PADA WORLD (DENGAN PENGECEKAN INTEGRITAS SNAPSHOT)
+-- Mengembalikan: success (bool), readyCount (int), growingCount (int), errReason (string)
 -- ==============================================================================
-local function scanWorldPlants()
+local function scanWorldPlants(targetWorldName)
+    local upperTarget = targetWorldName:upper()
+
+    -- 1. Verifikasi bot masih berada di world yang benar
+    if not bot:isInWorld(upperTarget) and not bot:isInWorld(targetWorldName) then
+        return false, 0, 0, "NOT_IN_TARGET_WORLD"
+    end
+
+    if bot.status ~= BotStatus.online then
+        return false, 0, 0, "BOT_OFFLINE_DURING_SCAN"
+    end
+
     local world = bot:getWorld()
     if not world then
-        return 0, 0, 0
+        return false, 0, 0, "WORLD_OBJECT_NIL"
+    end
+
+    local tiles = world:getTilesSafe()
+    if not tiles or #tiles == 0 then
+        return false, 0, 0, "TILES_SNAPSHOT_EMPTY"
     end
 
     local readyCount = 0
     local growingCount = 0
     local targetSeed = CONFIG.TARGET_SEED_ID or 0
-
-    local tiles = world:getTilesSafe()
-    if not tiles then
-        return 0, 0, 0
-    end
+    local readyOnly = CONFIG.READY_ONLY
 
     for _, tile in ipairs(tiles) do
         if tile.fg and tile.fg ~= 0 then
-            -- 1. Cek apakah pohon sudah matang (siap panen)
+            -- Pohon siap panen terverifikasi via canHarvest()
             if tile:canHarvest() then
                 if targetSeed <= 0 or tile.fg == targetSeed then
                     readyCount = readyCount + 1
                 end
-            else
-                -- 2. Cek apakah tanaman masih dalam pertumbuhan
+            elseif not readyOnly then
+                -- Cek bibit/pohon yang sedang tumbuh
                 if targetSeed > 0 then
+                    -- Filter strict berdasarkan ID seed target
                     if tile.fg == targetSeed then
                         growingCount = growingCount + 1
                     end
                 else
-                    -- Deteksi umum pohon / seed yang sedang tumbuh
-                    local isSeedOrTree = false
-                    if type(getInfo) == "function" then
-                        local info = getInfo(tile.fg)
-                        if info then
-                            local name = (info.name or ""):lower()
-                            if name:find("seed") or name:find("tree") or (info.action_type and info.action_type == 19) then
-                                isSeedOrTree = true
-                            end
-                        end
-                    end
-                    -- Fallback: metadata pertumbuhan pada tile extra
-                    if not isSeedOrTree and tile.hasExtra and tile:hasExtra() then
+                    -- Filter tervalidasi: Seed di Growtopia ber-ID ganjil dan memiliki timer growth pada tile extra
+                    local isGrowingSeed = false
+
+                    if tile.hasExtra and tile:hasExtra() then
                         local extra = tile:getExtra()
                         if extra and extra.growth ~= nil then
-                            isSeedOrTree = true
+                            isGrowingSeed = true
                         end
                     end
 
-                    if isSeedOrTree then
+                    -- Fallback catalog lookup jika extra tidak tersedia
+                    if not isGrowingSeed and (tile.fg % 2 == 1) and type(getInfo) == "function" then
+                        local info = getInfo(tile.fg)
+                        if info and info.name then
+                            local lowerName = info.name:lower()
+                            if lowerName:find(" seed$") or lowerName:find(" seed ") or (info.action_type and info.action_type == 19) then
+                                isGrowingSeed = true
+                            end
+                        end
+                    end
+
+                    if isGrowingSeed then
                         growingCount = growingCount + 1
                     end
                 end
@@ -294,8 +358,12 @@ local function scanWorldPlants()
         end
     end
 
-    local totalPlants = readyCount + growingCount
-    return readyCount, growingCount, totalPlants
+    -- 2. Verifikasi ulang bot tidak disconnect selama iterasi snapshot
+    if bot.status ~= BotStatus.online or not bot:isInWorld() then
+        return false, 0, 0, "DISCONNECT_DURING_SCAN"
+    end
+
+    return true, readyCount, growingCount, nil
 end
 
 -- ==============================================================================
@@ -306,98 +374,114 @@ local function processSingleWorld(worldEntry)
     if worldName == "" then return end
 
     local fullLabel = worldName .. (worldDoor ~= "" and ("|" .. worldDoor) or "")
-    print(string.format("\n--------------------------------------------------"))
-    print(string.format("[%s] Sedang memeriksa world: %s...", bot.name, fullLabel))
-
-    -- 1. Percobaan Warp
-    local success, reason = safeWarp(worldName, worldDoor)
-
-    -- Jika timeout, berikan 1x retry untuk memastikan bukan hanya lag jaringan
-    if not success and reason == "timeout" and not isNukedSignal then
-        print(string.format("[%s] Warp pertama timeout, mencoba ulang 1x...", bot.name))
-        sleep(1000)
-        success, reason = safeWarp(worldName, worldDoor)
-    end
-
     local timestamp = getTimestamp()
 
-    -- 2. Evaluasi Hasil: World Nuked / Inaccessible
-    if not success then
-        local isNuked = (reason == "nuked_signal" or reason == "could_not_warp" or reason == "timeout")
-        if isNuked then
-            print(string.format("[HASIL] ⛔ %s => NUKED / INACCESSIBLE (Alasan: %s)", fullLabel, tostring(lastSignalReason ~= "" and lastSignalReason or reason)))
-            appendToFile(CONFIG.OUTPUT.NUKED, fullLabel)
+    print(string.format("\n--------------------------------------------------"))
+    print(string.format("[%s] Memeriksa: %s...", bot.name, fullLabel))
 
-            local logLine = string.format("%s %-20s | STATUS: NUKED / INACCESSIBLE | Detail: %s",
-                timestamp, fullLabel, tostring(lastSignalReason ~= "" and lastSignalReason or reason))
-            appendToFile(CONFIG.OUTPUT.REPORT, logLine)
+    -- 1. Eksekusi Warp Pertama
+    local success, reason = executeWarp(worldName, worldDoor)
 
-            sendWebhookNotification("⛔ World Nuked Terdeteksi",
-                string.format("**World:** `%s`\n**Status:** Nuked / Inaccessible\n**Waktu:** %s", fullLabel, timestamp), 15158332)
-            return
-        else
-            print(string.format("[HASIL] ⚠️ %s => GAGAL MASUK (%s)", fullLabel, reason))
-            return
-        end
+    -- Toleransi lag: jika hanya timeout tanpa konfirmasi nuke, coba retry 1x
+    if not success and reason == "WARP_TIMEOUT" then
+        print(string.format("[%s] Warp pertama timeout, mencoba ulang 1x...", bot.name))
+        sleep(1000)
+        success, reason = executeWarp(worldName, worldDoor)
     end
 
-    -- 3. Evaluasi Hasil: World Berhasil Dimasuki (TIDAK NUKED) -> Cek Tanaman
-    local ready, growing, total = scanWorldPlants()
+    -- ==========================================================================
+    -- 2. EVALUASI HASIL WARP
+    -- ==========================================================================
 
-    if total > 0 then
-        local statusDetail = string.format("Total: %d (Siap Panen: %d, Masih Tumbuh: %d)", total, ready, growing)
-        print(string.format("[HASIL] 🌿 %s => ADA TANAMAN [%s]", fullLabel, statusDetail))
+    -- KASUS A: NUKED TERKONFIRMASI
+    if not success and reason == "CONFIRMED_NUKED" then
+        print(string.format("[HASIL] ⛔ %s => NUKED / INACCESSIBLE (Respon: %s)", fullLabel, tostring(nukeReasonText)))
+        appendToFile(CONFIG.OUTPUT.NUKED, fullLabel)
+        appendToFile(CONFIG.OUTPUT.REPORT, string.format("%s %-20s | STATUS: NUKED_CONFIRMED | Respon: %s", timestamp, fullLabel, nukeReasonText))
+        sendWebhookNotification("⛔ World Nuked Terkonfirmasi", string.format("**World:** `%s`\n**Pesan:** %s", fullLabel, nukeReasonText), 15158332)
+        return
+    end
 
-        appendToFile(CONFIG.OUTPUT.HAS_PLANT, string.format("%-18s | %s", fullLabel, statusDetail))
+    -- KASUS B: SERVER MAINTENANCE
+    if not success and reason == "SERVER_MAINTENANCE" then
+        print(string.format("[HASIL] ⏸️ %s => GAGAL (SERVER SEDANG MAINTENANCE)", fullLabel))
+        appendToFile(CONFIG.OUTPUT.FAILED, string.format("%-18s | Reason: SERVER_MAINTENANCE", fullLabel))
+        appendToFile(CONFIG.OUTPUT.REPORT, string.format("%s %-20s | STATUS: FAILED (SERVER_MAINTENANCE)", timestamp, fullLabel))
+        return
+    end
 
-        local logLine = string.format("%s %-20s | STATUS: ADA TANAMAN | Ready: %-4d | Growing: %-4d | Total: %-4d",
-            timestamp, fullLabel, ready, growing, total)
-        appendToFile(CONFIG.OUTPUT.REPORT, logLine)
+    -- KASUS C: GAGAL WARP (Timeout / Bot Offline / Lag) -> BUKAN BUKTI NUKE!
+    if not success then
+        print(string.format("[HASIL] ⚠️ %s => GAGAL WARP (Alasan: %s) -> Ditulis ke FAILED", fullLabel, reason))
+        appendToFile(CONFIG.OUTPUT.FAILED, string.format("%-18s | Reason: %s", fullLabel, reason))
+        appendToFile(CONFIG.OUTPUT.REPORT, string.format("%s %-20s | STATUS: WARP_FAILED (%s)", timestamp, fullLabel, reason))
+        return
+    end
 
-        sendWebhookNotification("🌿 Ada Tanaman",
-            string.format("**World:** `%s`\n**Siap Panen:** %d\n**Masih Tumbuh:** %d\n**Total:** %d", fullLabel, ready, growing, total), 3066993)
+    -- ==========================================================================
+    -- 3. EVALUASI HASIL SCAN TANAMAN (WORLD BERHASIL DIMASUKI)
+    -- ==========================================================================
+    local scanOk, ready, growing, scanErr = scanWorldPlants(worldName)
+
+    -- KASUS D: SCAN GAGAL (Snapshot nil / bot DC saat scan) -> JANGAN ANGGAP EMPTY!
+    if not scanOk then
+        print(string.format("[HASIL] ⚠️ %s => SCAN GAGAL (Alasan: %s) -> Ditulis ke FAILED", fullLabel, tostring(scanErr)))
+        appendToFile(CONFIG.OUTPUT.FAILED, string.format("%-18s | Reason: SCAN_FAILED_%s", fullLabel, tostring(scanErr)))
+        appendToFile(CONFIG.OUTPUT.REPORT, string.format("%s %-20s | STATUS: SCAN_FAILED (%s)", timestamp, fullLabel, tostring(scanErr)))
+        return
+    end
+
+    local totalPlants = ready + growing
+
+    -- KASUS E: ADA TANAMAN
+    if totalPlants > 0 then
+        local detailStr = string.format("Total: %d (Siap Panen: %d, Tumbuh: %d)", totalPlants, ready, growing)
+        print(string.format("[HASIL] 🌿 %s => ADA TANAMAN [%s]", fullLabel, detailStr))
+        appendToFile(CONFIG.OUTPUT.HAS_PLANT, string.format("%-18s | %s", fullLabel, detailStr))
+        appendToFile(CONFIG.OUTPUT.REPORT, string.format("%s %-20s | STATUS: ADA TANAMAN | Ready: %-4d | Growing: %-4d | Total: %-4d",
+            timestamp, fullLabel, ready, growing, totalPlants))
+        sendWebhookNotification("🌿 Ada Tanaman", string.format("**World:** `%s`\n**Siap Panen:** %d\n**Tumbuh:** %d\n**Total:** %d",
+            fullLabel, ready, growing, totalPlants), 3066993)
+
+    -- KASUS F: TERKONFIRMASI KOSONG (Tile valid, bot verified di world, tanaman = 0)
     else
-        print(string.format("[HASIL] 🍂 %s => KOSONG (TIDAK ADA TANAMAN)", fullLabel))
-
+        print(string.format("[HASIL] 🍂 %s => TERKONFIRMASI KOSONG (0 Tanaman)", fullLabel))
         appendToFile(CONFIG.OUTPUT.EMPTY, fullLabel)
-
-        local logLine = string.format("%s %-20s | STATUS: KOSONG (TIDAK ADA TANAMAN)", timestamp, fullLabel)
-        appendToFile(CONFIG.OUTPUT.REPORT, logLine)
-
-        sendWebhookNotification("🍂 World Kosong",
-            string.format("**World:** `%s`\n**Status:** Tidak ada pohon/tanaman", fullLabel), 9807270)
+        appendToFile(CONFIG.OUTPUT.REPORT, string.format("%s %-20s | STATUS: KOSONG_TERKONFIRMASI", timestamp, fullLabel))
+        sendWebhookNotification("🍂 World Kosong", string.format("**World:** `%s`\n**Status:** Bersih / Tanpa Tanaman", fullLabel), 9807270)
     end
 end
 
 -- ==============================================================================
--- EKSEKUTOR UTAMA (KELILING DAFTAR WORLD)
+-- EKSEKUTOR UTAMA
 -- ==============================================================================
 local function runScanner()
     print("==================================================")
-    print("      LUCIFER WORLD CHECKER BOT DIMULAI          ")
+    print("      LUCIFER WORLD CHECKER BOT v2.86            ")
     print("==================================================")
 
     while true do
-        -- Ambil daftar world dari file jika tersedia, atau dari tabel CONFIG.WORLDS
         local worldList = readFileLines(CONFIG.WORLD_LIST_FILE)
         if #worldList == 0 then
             worldList = CONFIG.WORLDS or {}
         end
 
         if #worldList == 0 then
-            print("[Warning] Tidak ada daftar world untuk dicek! Periksa WORLD_LIST_FILE atau CONFIG.WORLDS.")
+            print("[Warning] Daftar world kosong! Isi world_list.txt atau CONFIG.WORLDS.")
             break
         end
 
-        print(string.format("\n[Info] Memulai pemindaian %d world...", #worldList))
+        print(string.format("\n[Info] Memulai pemeriksaan %d world...", #worldList))
 
         for index, entry in ipairs(worldList) do
-            if not waitOnline(15) then
-                print("[Error] Bot offline terlalu lama saat rotasi scanner. Menunggu koneksi kembali...")
-                while not waitOnline(10) do sleep(2000) end
+            -- Reconnect guard sebelum lanjut
+            if not waitOnline(CONFIG.MAX_RECONNECT_WAIT) then
+                print("[Fatal] Bot offline melebihi batas tunggu! Menghentikan rotasi scan.")
+                appendToFile(CONFIG.OUTPUT.REPORT, string.format("%s BOT_ABORTED | Bot offline melebihi batas waktu tunggu", getTimestamp()))
+                return
             end
 
-            print(string.format("\n[%d/%d] Menuju target...", index, #worldList))
+            print(string.format("\n[%d/%d] Scanning...", index, #worldList))
             processSingleWorld(entry)
 
             sleep(CONFIG.NEXT_WORLD_DELAY)
@@ -408,7 +492,7 @@ local function runScanner()
         print("==================================================")
 
         if not CONFIG.LOOP_MODE then
-            print("[Selesai] Mode 1x putaran aktif. Script berhenti.")
+            print("[Selesai] Mode 1x putaran selesai. Script berhenti.")
             break
         else
             print(string.format("[Loop] Menunggu %d detik sebelum putaran berikutnya...", CONFIG.LOOP_INTERVAL))
@@ -418,18 +502,17 @@ local function runScanner()
 end
 
 -- ==============================================================================
--- LIFECYCLE CLEANUP
+-- CLEANUP
 -- ==============================================================================
 function on_stop(errorMessage)
     if type(removeEvents) == "function" then
         removeEvents()
     end
     if errorMessage and errorMessage ~= "" then
-        print("[Scanner Stopped with Error]: " .. errorMessage)
+        print("[Scanner Error]: " .. errorMessage)
     else
-        print("[Scanner Finished Normally]")
+        print("[Scanner Berhenti]")
     end
 end
 
--- Jalankan program
 runScanner()
