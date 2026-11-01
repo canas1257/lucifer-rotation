@@ -39,14 +39,12 @@ local CONFIG = {
     SEED_ID = 4585,        -- Contoh: Pepper Tree Seed
 
     -- ====================================================
-    -- Trik Kebal Malady (Anti Torn Punching Muscle)
+    -- Auto-Cure Malady (SURG AREA di World 4AID)
     -- ====================================================
-    -- Di Growtopia, player hanya bisa terkena 1 malady dalam satu waktu.
-    -- Jika bot terkena Grumbleteeth (penyakit akibat banyak chat), bot menjadi
-    -- KEBAL dari Torn Punching Muscle (penyakit pengurangan damage punch).
-    -- true  = Jika bot belum sakit, bot spam chat di Home sampai terkena Grumbleteeth, lalu lanjut rotasi.
-    -- false = Nonaktifkan fitur ini.
-    AUTO_GRUMBLETEETH = true,
+    -- Jika bot terinfeksi penyakit apa pun, bot otomatis menuju world 4AID
+    -- masuk ke SURG AREA dan menunggu sampai sembuh, lalu lanjut rotasi.
+    AUTO_CURE_MALADY = true,
+    MALADY_WORLD = "4AID",
 
     -- Batas & Ambang Toleransi
     BATCH_LIMIT = 20,      -- Maksimal pohon dipanen sebelum pulang ke home

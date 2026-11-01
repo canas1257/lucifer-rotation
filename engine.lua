@@ -509,85 +509,154 @@ local function checkAndEquipPickaxe()
 end
 
 -- ========================================================
--- ANTI TORN MUSCLE (GRUMBLETEETH MALADY TRIGGER)
--- Di Growtopia, player hanya bisa terkena 1 malady dalam satu waktu.
--- Trik: Sengaja memicu Grumbleteeth (via auto-chat) agar kebal dari
--- Torn Punching Muscle (yang mengurangi damage punch / speed break).
--- Begitu terkena malady, bot langsung lanjut rotasi seperti biasa.
+-- AUTO-CURE MALADY (SURG AREA DI WORLD 4AID)
+-- Alur otomatis navigasi malady / surg area di world 4AID:
+-- 1. Warp ke 4AID -> jalan ke (22, 16) -> masuk portal
+-- 2. Jalan ke (61, 12) -> hit adventure key -> jalan ke (64, 12) -> masuk portal
+-- 3. Jalan ke (50, 15) -> buka adventure door -> pilih button0 (SURG AREA)
+-- 4. Menunggu di SURG AREA (66, 39) sampai malady sembuh total
+-- Dilengkapi auto-recovery & reconnect guard tanpa rekursi
 -- ========================================================
-local function hasActiveMalady()
+local function hasMalady()
+    if not bot then return false end
     if bot.malady and type(bot.malady) == "number" and bot.malady ~= 0 then
+        return true, bot.malady
+    end
+    if bot.getMaladyDuration and bot:getMaladyDuration() > 0 then
+        return true, bot.malady or 1
+    end
+    return false, 0
+end
+
+local function isAutoCureMaladyEnabled()
+    if CONFIG.AUTO_CURE_MALADY ~= nil then return CONFIG.AUTO_CURE_MALADY == true end
+    if CONFIG.autoCureMalady ~= nil then return CONFIG.autoCureMalady == true end
+    if CONFIG.autoMalady ~= nil then return CONFIG.autoMalady == true end
+    return true -- Default otomatis aktif
+end
+
+local dialogHookRegistered = false
+local function sendAdventureDoorPacket(tx, ty, btn)
+    local pkt = string.format("action|dialog_return\ndialog_name|adventure_door\ntilex|%d|\ntiley|%d|\nbuttonClicked|%s\n", tx, ty, btn)
+    if type(bot.sendPacket) == "function" then
+        pcall(function() bot:sendPacket(2, pkt) end)
+    elseif type(bot.enter) == "function" then
+        pcall(function() bot:enter(btn) end)
+    end
+end
+
+local function registerDialogHook()
+    if dialogHookRegistered then return end
+    if type(addEvent) == "function" and type(Event) == "table" and Event.variantlist then
+        pcall(function()
+            addEvent(Event.variantlist, function(varlist)
+                if not varlist or type(varlist.get) ~= "function" then return end
+                local v0 = varlist:get(0)
+                local name = v0 and (v0.getString and v0:getString() or tostring(v0)) or ""
+                if name:find("OnDialogRequest") then
+                    local v1 = varlist:get(1)
+                    local content = v1 and (v1.getString and v1:getString() or tostring(v1)) or ""
+                    if content:find("adventure_door") and content:find("button0") then
+                        sendAdventureDoorPacket(50, 15, "button0")
+                    end
+                end
+            end)
+            dialogHookRegistered = true
+        end)
+    end
+end
+
+local function walkTo(x, y)
+    if not waitOnline() then return false end
+    if bot.x == x and bot.y == y then return true end
+    local ok = bot:findPath(x, y)
+    sleep(500)
+    return ok or (bot.x == x and bot.y == y)
+end
+
+local function enterPortal(x, y)
+    if type(bot.enter) == "function" then
+        pcall(function() bot:enter() end)
+    end
+    bot:hit(x, y)
+    sleep(400)
+end
+
+local function checkAndCureMalady()
+    if not isAutoCureMaladyEnabled() then return false end
+    local sakit, maladyId = hasMalady()
+    if not sakit then return false end
+
+    local maladyWorld = CONFIG.MALADY_WORLD or "4AID"
+    updateWebhook("Menyembuhkan Malady di " .. maladyWorld, "-")
+    print(string.format("[AutoMalady] Terdeteksi Malady (ID %s). Menuju %s untuk pengobatan di SURG AREA...",
+        tostring(maladyId or "Active"), maladyWorld))
+
+    registerDialogHook()
+
+    while waitOnline() and hasMalady() do
+        -- Step 1: Warp ke world 4AID
+        print("[AutoMalady] [Step 1] Menuju world " .. maladyWorld .. "...")
+        if not warp(maladyWorld) then
+            print("[AutoMalady] Gagal warp ke " .. maladyWorld .. ", mencoba lagi...")
+            sleep(2000)
+        else
+            sleep(1000)
+
+            -- Berjalan ke portal (22, 16)
+            print("[AutoMalady] [Step 1] Berjalan ke portal (22, 16)...")
+            walkTo(22, 16)
+            enterPortal(22, 16)
+            sleep(1500)
+
+            -- Step 2: Ambil adventure key di (61, 12) & masuk portal (64, 12)
+            if waitOnline() and hasMalady() then
+                print("[AutoMalady] [Step 2] Mengambil adventure key di (61, 12)...")
+                walkTo(61, 12)
+                bot:hit(61, 12)
+                sleep(800)
+
+                print("[AutoMalady] [Step 2] Berjalan ke portal (64, 12)...")
+                walkTo(64, 12)
+                enterPortal(64, 12)
+                sleep(1500)
+            end
+
+            -- Step 3: Berjalan ke adventure door (50, 15) & masuk ke SURG AREA
+            if waitOnline() and hasMalady() then
+                print("[AutoMalady] [Step 3] Berjalan ke adventure door (50, 15)...")
+                walkTo(50, 15)
+                if type(bot.enter) == "function" then pcall(function() bot:enter() end) end
+                bot:hit(50, 15)
+                sleep(500)
+                sendAdventureDoorPacket(50, 15, "button0")
+                sleep(1000)
+
+                -- Pindah ke spot tunggu SURG AREA di (66, 39)
+                walkTo(66, 39)
+                print("[AutoMalady] [Selesai] Berhasil tiba di SURG AREA (66, 39). Menunggu pengobatan selesai...")
+
+                -- Menunggu di SURG AREA sampai sembuh (dengan proteksi disconnect / terlempar)
+                while waitOnline() and hasMalady() do
+                    -- Cek jika bot DC / terlempar keluar dari SURG AREA ke pintu masuk
+                    if not isInTargetWorld(maladyWorld) or isAtDoor() or (bot.y < 30) then
+                        print("[AutoMalady] Peringatan: Bot DC / tergeser dari SURG AREA. Mengulang navigasi...")
+                        break
+                    end
+                    sleep(4000)
+                end
+            end
+        end
+    end
+
+    if not hasMalady() then
+        print("[AutoMalady] Malady telah sembuh total! Keluar dari SURG AREA & melanjutkan rotasi...")
+        updateWebhook("Malady Sembuh (Siap Bekerja)", "-")
+        sleep(1000)
         return true
     end
-    if bot.getMaladyDuration then
-        local dur = bot:getMaladyDuration()
-        if type(dur) == "number" and dur > 0 then
-            return true
-        end
-    end
+
     return false
-end
-
-local function isGrumbleteethEnabled()
-    if CONFIG.AUTO_GRUMBLETEETH ~= nil then return CONFIG.AUTO_GRUMBLETEETH == true end
-    if CONFIG.AutoGrumbleteeth ~= nil then return CONFIG.AutoGrumbleteeth == true end
-    if CONFIG.autoMalady ~= nil and (CONFIG.malady == "Grumbleteeth" or CONFIG.malady == nil) then
-        return CONFIG.autoMalady == true
-    end
-    -- Default otomatis aktif (true), jadi bot klien tidak wajib mengedit loader.lua
-    return true
-end
-
-local function ensureGrumbleteeth()
-    if not isGrumbleteethEnabled() then return end
-
-    if hasActiveMalady() then
-        print(string.format("[Malady] Bot sudah memiliki Malady (ID %s). Kebal dari pengurangan damage! Melanjutkan rotasi...", tostring(bot.malady or "Active")))
-        return
-    end
-
-    print("[Malady] Bot belum memiliki malady. Memicu Grumbleteeth (auto-chat di Home) agar kebal dari Torn Punching Muscle...")
-    updateWebhook("Memicu Grumbleteeth (Anti Torn Muscle)", "-")
-
-    if not warp(CONFIG.HOME) then
-        print("[Malady] Gagal warp ke Home untuk memicu Grumbleteeth.")
-        return
-    end
-
-    local chatSamples = {
-        "so cold today",
-        "need some fresh air",
-        "teeth are chattering",
-        "farming grind",
-        "freezing breeze",
-        "growtopia time",
-        "just chilling",
-        "brrr so cold",
-        "working hard",
-        "nice weather",
-        "let's keep going",
-        "staying active",
-    }
-
-    local attempt = 0
-    print("[Malady] Memulai auto-chat dengan jeda 3-5 detik sekali sampai terkena Grumbleteeth...")
-
-    while waitOnline() do
-        if hasActiveMalady() then
-            print(string.format("[Malady] SUKSES! Bot telah terinfeksi Malady (ID %s). Kebal dari Torn Punching Muscle!", tostring(bot.malady or "Active")))
-            print("[Malady] Melanjutkan rotasi farm...")
-            sleep(1000)
-            return
-        end
-
-        attempt = attempt + 1
-        local msg = chatSamples[math.random(#chatSamples)] .. " " .. math.random(100, 999)
-        bot:say(msg)
-
-        -- Jeda acak 3 hingga 5 detik (3000 - 5000 ms) agar terbebas dari deteksi spam server
-        local delayChat = math.random(3000, 5000)
-        sleep(delayChat)
-    end
 end
 
 -- ========================================================
@@ -683,6 +752,12 @@ local function doHarvest(dest)
     Collect(false)
     local farmName = type(dest) == "table" and dest.world or dest
     updateWebhook("Memanen Pohon (Harvest)", farmName)
+
+    -- Cek & sembuhkan malady sebelum panen
+    if hasMalady() then
+        print("[Farm] Terdeteksi Malady sebelum panen! Menuju 4AID untuk pengobatan...")
+        checkAndCureMalady()
+    end
 
     if not warp(dest) then return STATE.HARVEST end
 
@@ -850,6 +925,12 @@ local function doBreakHome(dest)
     local blocks = bot:getInventory():findItem(CONFIG.BLOCK_ID)
     if blocks == 0 then return STATE.PLANT end
 
+    -- Sesuai arahan Bos Anas: Cek & sembuhkan malady sebelum mulai break di Home
+    if hasMalady() then
+        print("[Home] Terdeteksi Malady sebelum break! Menuju 4AID untuk pengobatan di SURG AREA...")
+        checkAndCureMalady()
+    end
+
     local homeWorld = type(CONFIG.HOME) == "table" and CONFIG.HOME.world or CONFIG.HOME
     local homeDoor = type(CONFIG.HOME) == "table" and (CONFIG.HOME.door or "") or ""
 
@@ -902,6 +983,20 @@ local function doBreakHome(dest)
         if currentBlocks == 0 then
             print("[Home] Seluruh blok di tas sudah selesai dipecahkan!")
             break
+        end
+
+        -- Sesuai arahan Bos Anas: Jika di tengah proses break bot terkena malady,
+        -- bot otomatis langsung menuju 4AID untuk pengobatan, lalu kembali ke Home lanjut break!
+        if hasMalady() then
+            Collect(false)
+            print("[Home] Terdeteksi Malady di tengah proses break! Menuju 4AID untuk pengobatan di SURG AREA...")
+            checkAndCureMalady()
+            print("[Home] Malady telah sembuh. Kembali ke Home untuk melanjutkan break...")
+            warp(CONFIG.HOME)
+            standX, standY = findBreakSpot()
+            bot:findPath(standX, standY)
+            sleep(400)
+            Collect(true, 2)
         end
 
         -- Proteksi reconnect & recovery pintu langsung ke posisi kerja
@@ -1230,8 +1325,8 @@ while waitOnline() do
     -- 1. Pengecekan & Pengambilan Pickaxe otomatis saat start / awal putaran
     checkAndEquipPickaxe()
 
-    -- 2. Trik Kebal Malady: Pastikan bot terkena Grumbleteeth agar tidak terkena Torn Punching Muscle (pengurang damage)
-    ensureGrumbleteeth()
+    -- 2. Pengecekan & Pengobatan Malady Otomatis (World 4AID)
+    checkAndCureMalady()
 
     if not CONFIG.FARMS or #CONFIG.FARMS == 0 then
         print("[Engine] Peringatan: Daftar CONFIG.FARMS kosong!")
@@ -1240,7 +1335,7 @@ while waitOnline() do
 
     for _, currentFarm in ipairs(CONFIG.FARMS) do
         local farmName = type(currentFarm) == "table" and currentFarm.world or currentFarm
-        ensureGrumbleteeth()
+        checkAndCureMalady()
         print("[Engine] Memulai farm: " .. farmName)
         local currentState = (bot:getInventory():findItem(CONFIG.SEED_ID) > 0) and STATE.PLANT or STATE.HARVEST
 
