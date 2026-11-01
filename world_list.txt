@@ -1,5 +1,0 @@
-# Daftar World untuk dicek oleh bot Lucifer
-# Format: NAMA_WORLD atau NAMA_WORLD|DOOR_ID
-FARMKU1
-FARMKU2|DOOR1
-FARMKU3
