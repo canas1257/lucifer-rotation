@@ -137,6 +137,13 @@ local function isAtDoor()
     return false
 end
 
+local function isInTargetWorld(target)
+    if not bot or not bot:isInWorld() then return false end
+    local worldName = type(target) == "table" and target.world or target
+    local upper = type(worldName) == "string" and worldName:upper() or worldName
+    return bot:isInWorld(worldName) or bot:isInWorld(upper)
+end
+
 local function isAtWhiteDoor()
     return isAtDoor()
 end
