@@ -643,13 +643,24 @@ local function checkAndCureMalady()
                 walkTo(66, 39)
                 print("[AutoMalady] [Selesai] Berhasil tiba di SURG AREA (66, 39). Menunggu pengobatan selesai...")
 
-                -- Menunggu di SURG AREA sampai sembuh (dengan proteksi disconnect / terlempar)
+                -- Menunggu di SURG AREA sampai sembuh (hanya restart jika bot DC atau keluar world 4AID)
                 while waitOnline() and hasMalady() do
-                    -- Cek jika bot DC / terlempar keluar dari SURG AREA ke pintu masuk
-                    if not isInTargetWorld(maladyWorld) or isAtDoor() or (bot.y < 30) then
-                        print("[AutoMalady] Peringatan: Bot DC / tergeser dari SURG AREA. Mengulang navigasi...")
+                    -- Jika bot disconnect / offline
+                    if bot.status ~= BotStatus.online then
+                        print("[AutoMalady] Bot disconnect saat di SURG AREA. Menunggu reconnect...")
+                        while bot.status ~= BotStatus.online do
+                            sleep(1000)
+                        end
+                        print("[AutoMalady] Bot online kembali. Mengulang navigasi ke SURG AREA...")
                         break
                     end
+
+                    -- Jika bot terlempar / berpindah keluar dari world 4AID
+                    if not isInTargetWorld(maladyWorld) then
+                        print("[AutoMalady] Bot tidak berada di world " .. maladyWorld .. ". Mengulang navigasi...")
+                        break
+                    end
+
                     sleep(4000)
                 end
             end
