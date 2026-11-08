@@ -120,17 +120,11 @@ local function isAtDoor()
     local tile = world:getTile(bot.x, bot.y)
     if not tile then return false end
     local fg = tile.fg
-    -- 6 = White Door (Exit), 8 = Wooden Door (ID Door), 382 = Portcullis, 694 = Castle Door, 4992 = Dungeon Door, 100 = House Entrance
-    if fg == 6 or fg == 8 or fg == 382 or fg == 694 or fg == 4992 or fg == 100 then
+    -- ID 6: Main Door (White Door), ID 7: Door (Wooden Door), ID 12: Portcullis, ID 382: Time-Space Warp, ID 694: Castle Door, ID 4992: Dungeon Door
+    if fg == 6 or fg == 7 or fg == 12 or fg == 382 or fg == 694 or fg == 4992 then
         return true
     end
-    if tile.hasExtra and tile:hasExtra() then
-        local extra = tile:getExtra()
-        if extra and (extra.label ~= nil or extra.destination ~= nil) then
-            return true
-        end
-    end
-    -- Jika bot berada di baris paling atas spawn (y <= 0)
+    -- Khusus jika bot berada di baris paling atas spawn (y <= 0)
     if bot.y <= 0 then
         return true
     end
@@ -145,7 +139,10 @@ local function isInTargetWorld(target)
 end
 
 local function isAtWhiteDoor()
-    return isAtDoor()
+    local world = bot:getWorld()
+    if not world then return false end
+    local tile = world:getTile(bot.x, bot.y)
+    return tile ~= nil and tile.fg == 6
 end
 
 -- ========================================================
@@ -894,56 +891,64 @@ local function doHarvest(dest)
 end
 
 local function findBreakSpot()
-    local world = bot:getWorld()
-    if not world then return bot.x, bot.y end
-
-    -- Sesuai arahan Bos Anas: Batasi pencarian lokasi break hanya di antara Y 5 sampai Y 45
     local minY = CONFIG.BREAK_MIN_Y or 5
     local maxY = CONFIG.BREAK_MAX_Y or 45
-    minY = math.max(2, minY)
-    maxY = math.min(world.y - 3, maxY)
 
-    local candidates = {}
-    for _, tile in ipairs(world:getTilesSafe()) do
-        local sx, sy = tile.x, tile.y
-        if sx >= 2 and sx <= (world.x - 2) and sy >= minY and sy <= maxY then
-            if tile.fg == 0 and tile.fg ~= 6 then
-                local ground = world:getTile(sx, sy + 1)
-                -- Syarat lantai pijakan:
-                -- 1. Ada lantai padat (fg ~= 0) dan bukan White Door (fg ~= 6)
-                -- 2. BUKAN blok farm yang sedang di-break (ground.fg ~= CONFIG.BLOCK_ID)
-                --    agar bot tidak berdiri di atas blok farm yang tertinggal
-                -- 3. BUKAN seed (ground.fg ~= CONFIG.SEED_ID)
-                if ground and ground.fg ~= 0 and ground.fg ~= 6 
-                   and ground.fg ~= CONFIG.BLOCK_ID 
-                   and ground.fg ~= CONFIG.SEED_ID then
-                    local t1 = world:getTile(sx, sy - 1)
-                    local t2 = world:getTile(sx - 1, sy - 1)
-                    local t3 = world:getTile(sx + 1, sy - 1)
-                    if t1 and t1.fg == 0 and t2 and t2.fg == 0 and t3 and t3.fg == 0 then
-                        table.insert(candidates, { x = sx, y = sy })
+    for attempt = 1, 3 do
+        local world = bot:getWorld()
+        if world then
+            local limMinY = math.max(2, minY)
+            local limMaxY = math.min(world.y - 3, maxY)
+
+            local candidates = {}
+            for _, tile in ipairs(world:getTilesSafe()) do
+                local sx, sy = tile.x, tile.y
+                if sx >= 2 and sx <= (world.x - 2) and sy >= limMinY and sy <= limMaxY then
+                    if tile.fg == 0 and tile.fg ~= 6 and tile.fg ~= 7 and tile.fg ~= 12 then
+                        local ground = world:getTile(sx, sy + 1)
+                        -- Syarat lantai pijakan:
+                        -- 1. Ada lantai padat (fg ~= 0) dan bukan Pintu (fg ~= 6, 7, 12)
+                        -- 2. BUKAN blok farm yang sedang di-break (ground.fg ~= CONFIG.BLOCK_ID)
+                        -- 3. BUKAN seed (ground.fg ~= CONFIG.SEED_ID)
+                        if ground and ground.fg ~= 0 and ground.fg ~= 6 and ground.fg ~= 7 and ground.fg ~= 12
+                           and ground.fg ~= CONFIG.BLOCK_ID 
+                           and ground.fg ~= CONFIG.SEED_ID then
+                            local t1 = world:getTile(sx, sy - 1)
+                            local t2 = world:getTile(sx - 1, sy - 1)
+                            local t3 = world:getTile(sx + 1, sy - 1)
+                            if t1 and t1.fg == 0 and t2 and t2.fg == 0 and t3 and t3.fg == 0 then
+                                table.insert(candidates, { x = sx, y = sy })
+                            end
+                        end
+                    end
+                end
+            end
+
+            -- Acak urutan kandidat spot kosong agar bot memilih lokasi baru secara random
+            if #candidates > 0 then
+                math.randomseed(os.time())
+                for i = #candidates, 2, -1 do
+                    local j = math.random(i)
+                    candidates[i], candidates[j] = candidates[j], candidates[i]
+                end
+
+                for _, spot in ipairs(candidates) do
+                    if bot:findPath(spot.x, spot.y) then
+                        return spot.x, spot.y
                     end
                 end
             end
         end
+
+        sleep(600) -- Jeda streaming tile jika map baru dibuka
     end
 
-    -- Sesuai arahan Bos Anas: Acak urutan kandidat spot kosong agar bot memilih lokasi baru secara random
-    if #candidates > 0 then
-        math.randomseed(os.time())
-        for i = #candidates, 2, -1 do
-            local j = math.random(i)
-            candidates[i], candidates[j] = candidates[j], candidates[i]
-        end
-
-        for _, spot in ipairs(candidates) do
-            if bot:findPath(spot.x, spot.y) then
-                return spot.x, spot.y
-            end
-        end
-    end
-
-    return bot.x, bot.y
+    -- Fallback aman: JANGAN pernah mengembalikan koordinat pintu (y <= 0)!
+    -- Selalu kembalikan baris Y yang aman dalam rentang [minY, maxY]
+    local safeY = math.min(math.max(minY, 5), maxY)
+    local safeX = math.min(math.max(10, bot.x), 90)
+    print(string.format("[Home] Peringatan: Spot 3 blok kosong di Y [%d - %d] belum terdeteksi. Mencoba fallback ke (%d, %d)...", minY, maxY, safeX, safeY))
+    return safeX, safeY
 end
 
 local function doBreakHome(dest)
@@ -962,6 +967,8 @@ local function doBreakHome(dest)
 
     updateWebhook("Memecahkan Blok di Home (3 Blok Atas Simetris)", farmName)
     if not warp(CONFIG.HOME) then return STATE.BREAK_HOME end
+
+    sleep(1000) -- Tunggu stabilisasi streaming tile Home World dari server
 
     print("[Home] Auto-scan spot 3 blok di atas kepala (mencari lokasi kosong secara random)...")
     local targetX, targetY = findBreakSpot()
