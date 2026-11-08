@@ -519,7 +519,7 @@ end
 -- AUTO-CURE MALADY (SURG AREA DI WORLD 4AID)
 -- Alur otomatis navigasi malady / surg area di world 4AID:
 -- 1. Warp ke 4AID -> jalan ke (22, 16) -> masuk portal
--- 2. Jalan ke (61, 12) -> hit adventure key -> jalan ke (64, 12) -> masuk portal
+-- 2. Jalan ke (61, 12) -> hit adventure key -> jalan ke (58, 15) -> masuk portal
 -- 3. Jalan ke (50, 15) -> buka adventure door -> pilih button0 (SURG AREA)
 -- 4. Menunggu di SURG AREA (66, 39) sampai malady sembuh total
 -- Dilengkapi auto-recovery & reconnect guard tanpa rekursi
@@ -624,7 +624,7 @@ local function checkAndCureMalady()
                 sleep(800)
 
                 print("[AutoMalady] [Step 2] Berjalan ke portal (58, 15)...")
-                walkTo(64, 12)
+                walkTo(58, 15)
                 enterPortal(58, 15)
                 sleep(1500)
             end
