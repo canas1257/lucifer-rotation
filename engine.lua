@@ -1109,6 +1109,8 @@ local function doBreakHome(dest)
 
         -- 3. Cek overflow seed saat break (> 190 drop 100 ke storage)
         if bot:getInventory():findItem(CONFIG.SEED_ID) > 190 then
+            sleep(1000)
+            bot:collect(2)
             Collect(false)
             print(string.format("[Home] Seed di tas mencapai %d (> 190). Menyimpan 100 seed ke storage...", bot:getInventory():findItem(CONFIG.SEED_ID)))
             updateWebhook("Menyimpan 100 Seed ke Storage (Tas Penuh)", farmName)
@@ -1126,6 +1128,9 @@ local function doBreakHome(dest)
         end
     end
 
+    -- Sesuai arahan Bos Anas: Tunggu 1 detik & collect sebelum mematikan auto_collect agar hasil break tercollect sempurna
+    sleep(1000)
+    bot:collect(2)
     Collect(false)
 
     -- 4. Auto-Trash sampah setelah selesai break di Home
