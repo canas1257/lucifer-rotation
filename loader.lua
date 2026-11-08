@@ -20,7 +20,14 @@ local CONFIG = {
     },
 
     -- World untuk memecahkan blok hasil panen
-    HOME = { world = "MYHOME", door = "" },
+    -- Mendukung single table { world = "...", door = "..." } maupun daftar banyak world acak:
+    -- HOME = {
+    --     { world = "HOME1", door = "id1" },
+    --     { world = "HOME2", door = "id2" },
+    -- }
+    HOME = {
+        { world = "MYHOME", door = "" },
+    },
 
     -- World storage untuk menyimpan seed & hasil item pack
     -- Mendukung pintu terpisah: 'doorseed' untuk seed dan 'doorpack' untuk pack

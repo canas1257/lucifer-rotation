@@ -150,6 +150,35 @@ end
 -- Mendukung pintu terpisah:
 -- STORAGE = { world = "world", doorseed = "door", doorpack = "door" }
 -- ========================================================
+-- ========================================================
+-- HELPER HOME DESTINATION (MULTI-WORLD RANDOM HOME)
+-- Mendukung single table: { world = "..", door = ".." }
+-- maupun multiple worlds: { { world = "..", door = ".." }, ... }
+-- ========================================================
+local function getHomeDest()
+    local cfg = CONFIG.HOME
+    if type(cfg) == "string" then
+        return { world = cfg, door = "" }
+    end
+    if type(cfg) == "table" then
+        -- Jika array of tables (multi-home)
+        if #cfg > 0 then
+            math.randomseed(os.time() + (bot.index or 1) + math.random(1, 1000))
+            local pick = cfg[math.random(#cfg)]
+            if type(pick) == "table" then
+                return { world = pick.world or "", door = pick.door or "" }
+            elseif type(pick) == "string" then
+                return { world = pick, door = "" }
+            end
+        end
+        -- Jika single table { world = "..", door = ".." }
+        if cfg.world then
+            return { world = cfg.world, door = cfg.door or "" }
+        end
+    end
+    return { world = "", door = "" }
+end
+
 local function getStorageDest(storageType)
     local cfg = CONFIG.STORAGE
     if type(cfg) == "string" then
@@ -962,11 +991,13 @@ local function doBreakHome(dest)
         checkAndCureMalady()
     end
 
-    local homeWorld = type(CONFIG.HOME) == "table" and CONFIG.HOME.world or CONFIG.HOME
-    local homeDoor = type(CONFIG.HOME) == "table" and (CONFIG.HOME.door or "") or ""
+    local activeHome = getHomeDest()
+    local homeWorld = activeHome.world
+    local homeDoor = activeHome.door or ""
 
     updateWebhook("Memecahkan Blok di Home (3 Blok Atas Simetris)", farmName)
-    if not warp(CONFIG.HOME) then return STATE.BREAK_HOME end
+    print(string.format("[Home] Terpilih Home World: %s (Door: '%s'). Menuju ke lokasi...", homeWorld, homeDoor))
+    if not warp(activeHome) then return STATE.BREAK_HOME end
 
     sleep(1000) -- Tunggu stabilisasi streaming tile Home World dari server
 
@@ -1025,7 +1056,7 @@ local function doBreakHome(dest)
             print("[Home] Terdeteksi Malady di tengah proses break! Menuju 4AID untuk pengobatan di SURG AREA...")
             checkAndCureMalady()
             print("[Home] Malady telah sembuh. Kembali ke Home untuk melanjutkan break...")
-            warp(CONFIG.HOME)
+            warp(activeHome)
             standX, standY = findBreakSpot()
             bot:findPath(standX, standY)
             sleep(400)
@@ -1033,7 +1064,7 @@ local function doBreakHome(dest)
         end
 
         -- Proteksi reconnect & recovery pintu langsung ke posisi kerja
-        reconnectGuard(CONFIG.HOME, standX, standY)
+        reconnectGuard(activeHome, standX, standY)
 
         -- Sesuai arahan Bos Anas: Jika bot terlempar / berada di Pintu (White Door 6 / ID Door 8 pada 97,0),
         -- atau bot tergeser dari spot kerja, bot otomatis kembali ke spot break atau cari spot baru di Y 5 - Y 45!
@@ -1135,7 +1166,7 @@ local function doBreakHome(dest)
                 local dropY = bot.y
                 smartDrop(CONFIG.SEED_ID, 100, dropX, dropY, 1000)
             end
-            warp(CONFIG.HOME)
+            warp(activeHome)
             bot:findPath(standX, standY)
             sleep(400)
             standX, standY = bot.x, bot.y
