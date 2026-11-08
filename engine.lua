@@ -21,9 +21,9 @@ end
 bot.leave_world_before_warp = false -- Langsung warp antar-world tanpa exit terlebih dahulu
 
 local intervals = CONFIG.ACTION_INTERVALS or {}
-bot:setInterval(Action.hit, intervals.hit or 0.18)
-bot:setInterval(Action.place, intervals.place or 0.16)
-bot:setInterval(Action.move, intervals.move or 0.20)
+bot:setInterval(Action.hit, intervals.hit or 0.15)
+bot:setInterval(Action.place, intervals.place or 0.13)
+bot:setInterval(Action.move, intervals.move or 0.14)
 
 local STATE = {
     HARVEST = 1,
@@ -831,7 +831,27 @@ local function doHarvest(dest)
 
         local inv = bot:getInventory()
         if inv:findItem(CONFIG.BLOCK_ID) >= maxBlocks or (inv:findItem(CONFIG.BLOCK_ID) == 0 and inv.emptyslots == 0) then
-            print(string.format("[Farm] Blok di tas mencapai batas (%d). Menuju Home untuk break...", inv:findItem(CONFIG.BLOCK_ID)))
+            print(string.format("[Farm] Blok di tas mencapai batas (%d).", inv:findItem(CONFIG.BLOCK_ID)))
+
+            -- Sesuai arahan Bos Anas: Jika ada sisa seed di tas hasil panen, tanam di lahan kosong bekas panen tadi sebelum ke Home
+            local seedsInBag = inv:findItem(CONFIG.SEED_ID)
+            if seedsInBag > 0 then
+                print(string.format("[Farm] Menanam %d seed di lahan kosong bekas panen...", seedsInBag))
+                local spots = getZigzagPlantSpots()
+                for _, spot in ipairs(spots) do
+                    if not waitOnline() or bot:getInventory():findItem(CONFIG.SEED_ID) == 0 then break end
+                    local curAbove = world:getTile(spot.x, spot.y)
+                    local curGround = world:getTile(spot.groundX, spot.groundY)
+                    if curAbove and curAbove.fg == 0 and curGround and curGround.fg ~= 0 and curGround.fg ~= 6 and curGround.fg ~= CONFIG.SEED_ID then
+                        if bot:findPath(spot.x, spot.y) then
+                            bot:place(spot.x, spot.y, CONFIG.SEED_ID)
+                            sleep(130)
+                        end
+                    end
+                end
+            end
+
+            print("[Farm] Menuju Home untuk break...")
             return STATE.BREAK_HOME
         end
 
@@ -844,26 +864,12 @@ local function doHarvest(dest)
             reached = bot:findPath(tile.x - 1, tile.y) or bot:findPath(tile.x + 1, tile.y)
         end
 
+        -- Sesuai arahan Bos Anas: Murni harvest cepat (tanpa jeda tanam per pohon)
         if tile:canHarvest() and reached then
             bot:hit(tile.x, tile.y)
-            sleep(180)
+            sleep(130)
             bot:collect(3)
             harvested = harvested + 1
-
-            -- Sesuai arahan Bos Anas: Jika di backpack ada seed, bot langsung harvest dan tanam di tile tersebut!
-            -- Jika tidak ada seed di tas, bot hanya harvest seperti biasa tanpa jeda tanam.
-            local currentSeeds = bot:getInventory():findItem(CONFIG.SEED_ID)
-            if currentSeeds > 0 then
-                local curTile = world:getTile(tile.x, tile.y)
-                if not curTile or curTile.fg ~= 0 then
-                    sleep(100)
-                    curTile = world:getTile(tile.x, tile.y)
-                end
-                if curTile and curTile.fg == 0 then
-                    bot:place(tile.x, tile.y, CONFIG.SEED_ID)
-                    sleep(160)
-                end
-            end
         end
     end
 

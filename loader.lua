@@ -53,11 +53,11 @@ local CONFIG = {
     BREAK_MIN_Y = 5,       -- Batas minimal baris Y spot break di Home (antara Y 5 - 45)
     BREAK_MAX_Y = 45,      -- Batas maksimal baris Y spot break di Home (antara Y 5 - 45)
 
-    -- Interval Aksi Bot (Detik)
+    -- Interval Aksi Bot (Detik) - Dipercepat untuk kecepatan findpath & farming
     ACTION_INTERVALS = {
-        hit = 0.18,
-        place = 0.16,
-        move = 0.20,
+        hit = 0.15,
+        place = 0.13,
+        move = 0.14,
     },
 
     -- ====================================================
