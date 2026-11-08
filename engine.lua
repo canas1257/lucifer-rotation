@@ -623,9 +623,9 @@ local function checkAndCureMalady()
                 bot:hit(61, 12)
                 sleep(800)
 
-                print("[AutoMalady] [Step 2] Berjalan ke portal (64, 12)...")
+                print("[AutoMalady] [Step 2] Berjalan ke portal (58, 15)...")
                 walkTo(64, 12)
-                enterPortal(64, 12)
+                enterPortal(58, 15)
                 sleep(1500)
             end
 
