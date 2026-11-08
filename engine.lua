@@ -524,7 +524,16 @@ end
 -- 4. Menunggu di SURG AREA (66, 39) sampai malady sembuh total
 -- Dilengkapi auto-recovery & reconnect guard tanpa rekursi
 -- ========================================================
+local function isAutoCureMaladyEnabled()
+    if CONFIG.AUTO_CURE_MALADY ~= nil then return CONFIG.AUTO_CURE_MALADY == true end
+    if CONFIG.autoCureMalady ~= nil then return CONFIG.autoCureMalady == true end
+    if CONFIG.autoMalady ~= nil then return CONFIG.autoMalady == true end
+    return false -- Default false jika tidak disetel
+end
+
 local function hasMalady()
+    -- Sesuai arahan Bos Anas: Jika AUTO_CURE_MALADY = false, abaikan malady 100% agar tidak mengganggu rotasi
+    if not isAutoCureMaladyEnabled() then return false, 0 end
     if not bot then return false end
     if bot.malady and type(bot.malady) == "number" and bot.malady ~= 0 then
         return true, bot.malady
@@ -533,13 +542,6 @@ local function hasMalady()
         return true, bot.malady or 1
     end
     return false, 0
-end
-
-local function isAutoCureMaladyEnabled()
-    if CONFIG.AUTO_CURE_MALADY ~= nil then return CONFIG.AUTO_CURE_MALADY == true end
-    if CONFIG.autoCureMalady ~= nil then return CONFIG.autoCureMalady == true end
-    if CONFIG.autoMalady ~= nil then return CONFIG.autoMalady == true end
-    return true -- Default otomatis aktif
 end
 
 local dialogHookRegistered = false

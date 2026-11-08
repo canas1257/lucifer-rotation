@@ -41,9 +41,9 @@ local CONFIG = {
     -- ====================================================
     -- Auto-Cure Malady (SURG AREA di World 4AID)
     -- ====================================================
-    -- Jika bot terinfeksi penyakit apa pun, bot otomatis menuju world 4AID
-    -- masuk ke SURG AREA dan menunggu sampai sembuh, lalu lanjut rotasi.
-    AUTO_CURE_MALADY = true,
+    -- true  = Jika terkena malady, bot otomatis ke 4AID (SURG AREA) untuk berobat lalu lanjut rotasi.
+    -- false = Matikan fitur ini (bot tidak akan mengecek malady agar tidak mengganggu rotasi).
+    AUTO_CURE_MALADY = false,
     MALADY_WORLD = "4AID",
 
     -- Batas & Ambang Toleransi
