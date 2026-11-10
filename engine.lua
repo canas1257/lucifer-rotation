@@ -37,6 +37,88 @@ local STATE = {
 -- ========================================================
 -- DISCORD WEBHOOK MONITORING (EDIT PESAN REALTIME)
 -- ========================================================
+local sessionStats = {
+    initialGems = nil,
+    gemsSpent = 0,
+    packsBought = 0,
+    seedsSaved = 0,
+    worldsDone = 0,
+    startEpoch = os.time and os.time() or 0,
+    lastOnlineTime = os.time and os.time() or 0,
+}
+
+local function formatNumber(n)
+    local s = tostring(math.floor(n or 0))
+    local k
+    while true do
+        s, k = string.gsub(s, "^(-?%d+)(%d%d%d)", "%1,%2")
+        if k == 0 then break end
+    end
+    return s
+end
+
+local function getMaladyString()
+    local maladyNames = {
+        [1] = "Torn Muscle",
+        [2] = "Broken Leg",
+        [3] = "Chicken Feet",
+        [4] = "Grumbleteeth",
+        [5] = "Brainworms",
+        [6] = "Sweaty Palms",
+        [7] = "Appendicitis",
+        [8] = "Frog Throat",
+        [9] = "G-Virus",
+        [10] = "Turtle Flu",
+    }
+    if not bot or not bot.malady or bot.malady == 0 then
+        return "None"
+    end
+    local mName = maladyNames[bot.malady] or string.format("Malady %d", bot.malady)
+    local dur = 0
+    pcall(function()
+        if bot.getMaladyDuration then dur = bot:getMaladyDuration() or 0 end
+    end)
+    local durMin = math.floor(dur / 60)
+    if durMin > 0 then
+        return string.format("%s (%d min)", mName, durMin)
+    else
+        return mName
+    end
+end
+
+local function getWorldTreeCounts()
+    local readyCount = 0
+    local unreadyCount = 0
+    local world = bot:isInWorld() and bot:getWorld()
+    if world then
+        pcall(function()
+            for _, tile in ipairs(world:getTilesSafe()) do
+                if tile:canHarvest() then
+                    readyCount = readyCount + 1
+                elseif tile.fg == CONFIG.SEED_ID then
+                    unreadyCount = unreadyCount + 1
+                end
+            end
+        end)
+    end
+    return readyCount, unreadyCount
+end
+
+local function getFossilRockCount()
+    local count = 0
+    local world = bot:isInWorld() and bot:getWorld()
+    if world then
+        pcall(function()
+            for _, tile in ipairs(world:getTilesSafe()) do
+                if tile.fg == 3918 then
+                    count = count + 1
+                end
+            end
+        end)
+    end
+    return count
+end
+
 local webhookClient = nil
 local lastWebhookSent = 0
 
@@ -47,59 +129,88 @@ local function updateWebhook(currentAction, activeFarm)
     end
 
     local now = os.time and os.time() or 0
-    if (now - lastWebhookSent) < 3 then return end
+    if (now - lastWebhookSent) < 2 then return end
     lastWebhookSent = now
 
     if not webhookClient then
-        webhookClient = Webhook.new(cfg.URL)
-        webhookClient.username = "Lucifer Monitor (" .. tostring(bot.name) .. ")"
+        pcall(function()
+            webhookClient = Webhook.new(cfg.URL)
+            webhookClient.username = "Lucifer Monitor (" .. tostring(bot.name) .. ")"
+        end)
     end
+    if not webhookClient then return end
 
     if cfg.MESSAGE_ID and cfg.MESSAGE_ID ~= "" then
         webhookClient.message_id = tostring(cfg.MESSAGE_ID)
     end
 
     local isOnline = (bot.status == BotStatus.online)
-    local currentWorld = (bot:isInWorld() and bot:getWorld().name or "In Transit")
-    local tilePos = string.format("(%d, %d)", bot.x or 0, bot.y or 0)
-    local ping = tostring(bot:getPing()) .. " ms"
-    local gems = tostring(bot.gem_count or 0)
-
-    local inv = bot:getInventory()
-    local slots = inv and (tostring(inv.itemcount) .. "/" .. tostring(inv.slotcount)) or "-"
-    local emptySlots = inv and tostring(inv.emptyslots) or "-"
-
-    local packItemStr = "-"
-    local packCfg = CONFIG.AUTO_BUY_PACK
-    if packCfg and packCfg.ENABLED and packCfg.ItemIDOfPack and inv then
-        local parts = {}
-        for _, id in ipairs(packCfg.ItemIDOfPack) do
-            local c = inv:findItem(id)
-            if c > 0 then table.insert(parts, string.format("ID %d: %d", id, c)) end
-        end
-        if #parts > 0 then packItemStr = table.concat(parts, ", ") end
+    if isOnline then
+        sessionStats.lastOnlineTime = now
     end
 
-    local statusColor = isOnline and 3066993 or 15158332
+    local curGems = bot.gem_count or 0
+    if sessionStats.initialGems == nil then
+        sessionStats.initialGems = curGems
+    end
+    local gemGain = curGems - sessionStats.initialGems
+
+    local currentWorld = (bot:isInWorld() and bot:getWorld().name or "world")
+    local ping = 0
+    pcall(function() if bot.getPing then ping = bot:getPing() or 0 end end)
+    local pingStr = string.format("%d ms", ping)
+    local botLevelStr = tostring(bot.level or 0)
+
+    -- Status & Title Header
+    local titleStr = "Auto Rotation [Online]"
+    local statusStr = "online"
+    local statusColor = 3066993 -- Hijau
+    if not isOnline then
+        local offSec = math.max(0, now - sessionStats.lastOnlineTime)
+        titleStr = string.format("Auto Rotation [Offline (%ds)]", offSec)
+        statusStr = "offline"
+        statusColor = 15158332 -- Merah
+    end
+
+    local minutesRunning = math.floor((now - sessionStats.startEpoch) / 60)
+    local updatedFooter = (minutesRunning > 0) and string.format("Updated %d minutes ago", minutesRunning) or "Updated just now"
+
+    local readyTrees, unreadyTrees = getWorldTreeCounts()
+    local fossilCount = getFossilRockCount()
+    local storageWorldName = type(CONFIG.STORAGE) == "table" and (CONFIG.STORAGE.world or "-") or tostring(CONFIG.STORAGE or "-")
 
     webhookClient.content = ""
     webhookClient.embed1.use = true
     webhookClient.embed1.color = statusColor
-    webhookClient.embed1.title = "📊 Lucifer Rotation v2.86 — " .. tostring(bot.name)
-    webhookClient.embed1.description = string.format("**Aktivitas:** %s\n**Target Farm:** %s", tostring(currentAction or "-"), tostring(activeFarm or "-"))
+    webhookClient.embed1.title = titleStr
+    webhookClient.embed1.description = ""
 
-    webhookClient.embed1:addField("Status", isOnline and "🟢 ONLINE" or "🔴 OFFLINE", true)
-    webhookClient.embed1:addField("World Sekarang", currentWorld, true)
-    webhookClient.embed1:addField("Posisi Tile", tilePos, true)
-    webhookClient.embed1:addField("Gems", gems, true)
-    webhookClient.embed1:addField("Ping", ping, true)
-    webhookClient.embed1:addField("Slot Tas (Isi/Kosong)", string.format("%s (Sisa %s)", slots, emptySlots), true)
-    webhookClient.embed1:addField("Item Pack di Tas", packItemStr, false)
+    pcall(function()
+        if webhookClient.embed1.footer then
+            webhookClient.embed1.footer.text = updatedFooter
+        end
+    end)
+
+    -- 14 Fields persis sesuai susunan template Bos Anas
+    webhookClient.embed1:addField("Bot Name", tostring(bot.name or "namebot"), true)
+    webhookClient.embed1:addField("Bot Status", statusStr, true)
+    webhookClient.embed1:addField("Bot Ping", pingStr, true)
+    webhookClient.embed1:addField("Bot Level", botLevelStr, true)
+    webhookClient.embed1:addField("Gems (Gain)", string.format("%s (+%s)", formatNumber(curGems), formatNumber(math.max(0, gemGain))), true)
+    webhookClient.embed1:addField("Current World", currentWorld, true)
+    webhookClient.embed1:addField("Worlds Done", string.format("%d worlds", sessionStats.worldsDone), true)
+    webhookClient.embed1:addField("Gems Spent", formatNumber(sessionStats.gemsSpent), true)
+    webhookClient.embed1:addField("Trees on World", string.format("%d ready\n%d unready", readyTrees, unreadyTrees), true)
+    webhookClient.embed1:addField("Fossil Rock", string.format("%d Fossil Rock", fossilCount), true)
+    webhookClient.embed1:addField("Packs Bought", tostring(sessionStats.packsBought), true)
+    webhookClient.embed1:addField("Seeds Saved", formatNumber(sessionStats.seedsSaved), true)
+    webhookClient.embed1:addField("Storage", storageWorldName, true)
+    webhookClient.embed1:addField("Active Malady", getMaladyString(), true)
 
     if webhookClient.message_id and webhookClient.message_id ~= "" then
-        webhookClient:edit()
+        pcall(function() webhookClient:edit() end)
     else
-        webhookClient:send()
+        pcall(function() webhookClient:send() end)
     end
 end
 
@@ -249,6 +360,7 @@ local function warp(dest)
                 sleep(600)
             end
             lastWarpDoor = door
+            updateWebhook("Tiba di World: " .. tostring(world), world)
             return true
         end
         if not waitOnline(3) then return false end
@@ -352,6 +464,9 @@ local function smartDrop(itemId, count, startX, startY, delayDrop)
         if after < before then
             local dropped = before - after
             count = count - dropped
+            if itemId == CONFIG.SEED_ID then
+                sessionStats.seedsSaved = sessionStats.seedsSaved + dropped
+            end
             print(string.format("[Storage] Sukses drop %d unit item [ID %d] di (%d, %d). Sisa perlu drop: %d", dropped, itemId, curX, curY, count))
             if count <= 0 or after == 0 then
                 break
@@ -1214,6 +1329,11 @@ local function doBuyPack(dest)
                 sleep(delayBuy)
             end
             print(string.format("[AutoBuy] Selesai beli %d pack. Sisa gems: %d", boughtCount, bot.gem_count))
+            if boughtCount > 0 then
+                sessionStats.packsBought = sessionStats.packsBought + boughtCount
+                sessionStats.gemsSpent = sessionStats.gemsSpent + (boughtCount * price)
+                updateWebhook("Selesai Beli Pack", farmName)
+            end
 
             -- Sesuai arahan Bos Anas: Begitu selesai beli pack, LANGSUNG drop item pack ke world storage detik itu juga!
             local hasPackItems = false
@@ -1427,6 +1547,8 @@ while waitOnline() do
                         currentState = STATE.HARVEST
                     else
                         print(string.format("[Engine] Terverifikasi 100%% tidak ada pohon siap panen yang tersisa (%d pohon masih tumbuh). Pindah ke world berikutnya...", stillGrowing))
+                        sessionStats.worldsDone = sessionStats.worldsDone + 1
+                        updateWebhook("Menyelesaikan World: " .. farmName, farmName)
                         break
                     end
                 else
