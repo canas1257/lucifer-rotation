@@ -724,7 +724,8 @@ local function getZigzagReadyTrees()
         if tile:canHarvest() then
             local y = tile.y
             if not rows[y] then rows[y] = {} end
-            table.insert(rows[y], tile)
+            -- Simpan HANYA koordinat primitif {x, y} (Mencegah dangling pointer & Access Violation)
+            table.insert(rows[y], { x = tile.x, y = tile.y })
             readyCount = readyCount + 1
         elseif tile.fg == CONFIG.SEED_ID then
             growingCount = growingCount + 1
@@ -853,7 +854,7 @@ local function doHarvest(dest)
     local readyTrees, growingCount = getZigzagReadyTrees()
     print(string.format("[Farm] Status World: %d pohon siap panen | %d pohon masih dalam pertumbuhan", #readyTrees, growingCount))
 
-    for _, tile in ipairs(readyTrees) do
+    for _, coord in ipairs(readyTrees) do
         if not waitOnline() then return STATE.HARVEST end
 
         local inv = bot:getInventory()
@@ -869,14 +870,25 @@ local function doHarvest(dest)
             return STATE.STORE
         end
 
-        local reached = bot:findPath(tile.x, tile.y)
+        local reached = bot:findPath(coord.x, coord.y)
         if not reached then
-            reached = bot:findPath(tile.x - 1, tile.y) or bot:findPath(tile.x + 1, tile.y)
+            reached = bot:findPath(coord.x - 1, coord.y) or bot:findPath(coord.x + 1, coord.y)
+        end
+
+        -- Query tile segar langsung dari memory world (mencegah Access Violation)
+        local curWorld = bot:getWorld()
+        local freshTile = curWorld and curWorld:getTile(coord.x, coord.y)
+
+        local isReady = false
+        if freshTile then
+            pcall(function()
+                isReady = freshTile:canHarvest()
+            end)
         end
 
         -- Murni harvest cepat tanpa jeda menanam
-        if tile:canHarvest() and reached then
-            bot:hit(tile.x, tile.y)
+        if isReady and reached then
+            bot:hit(coord.x, coord.y)
             sleep(140)
             bot:collect(3)
             harvested = harvested + 1
