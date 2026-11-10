@@ -210,7 +210,35 @@ local function updateWebhook(currentAction, activeFarm)
     if webhookClient.message_id and webhookClient.message_id ~= "" then
         pcall(function() webhookClient:edit() end)
     else
-        pcall(function() webhookClient:send() end)
+        -- Jika MESSAGE_ID kosong di config, buat pesan pertama dengan ?wait=true & auto-capture ID agar bisa di-edit terus
+        local captured = false
+        if HttpClient and Method and Method.post then
+            pcall(function()
+                local postUrl = cfg.URL
+                if not postUrl:find("wait=true") then
+                    postUrl = postUrl .. (postUrl:find("%?") and "&wait=true" or "?wait=true")
+                end
+                local payload = webhookClient:makeContent()
+                local client = HttpClient.new()
+                client:setUrl(postUrl)
+                client:setMethod(Method.post)
+                client.headers = { ["Content-Type"] = "application/json" }
+                client.body = payload
+                local res = client:request()
+                if res.error == 0 and res.body then
+                    local mid = res.body:match('"id"%s*:%s*"([%d]+)"')
+                    if mid then
+                        webhookClient.message_id = mid
+                        captured = true
+                        print("[Webhook] Pesan dashboard pertama dibuat & dilock (Message ID: " .. mid .. "). Update selanjutnya akan meng-edit pesan ini!")
+                    end
+                end
+            end)
+        end
+
+        if not captured then
+            pcall(function() webhookClient:send() end)
+        end
     end
 end
 
