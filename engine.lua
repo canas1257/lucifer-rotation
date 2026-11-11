@@ -119,7 +119,7 @@ local function getFossilRockCount()
     return count
 end
 
-local webhookClient = nil
+local savedMessageId = nil
 local lastWebhookSent = 0
 
 local function updateWebhook(currentAction, activeFarm)
@@ -132,16 +132,20 @@ local function updateWebhook(currentAction, activeFarm)
     if (now - lastWebhookSent) < 2 then return end
     lastWebhookSent = now
 
-    if not webhookClient then
-        pcall(function()
-            webhookClient = Webhook.new(cfg.URL)
-            webhookClient.username = "Lucifer Monitor (" .. tostring(bot.name) .. ")"
-        end)
+    if not savedMessageId and cfg.MESSAGE_ID and cfg.MESSAGE_ID ~= "" then
+        savedMessageId = tostring(cfg.MESSAGE_ID)
     end
-    if not webhookClient then return end
 
-    if cfg.MESSAGE_ID and cfg.MESSAGE_ID ~= "" then
-        webhookClient.message_id = tostring(cfg.MESSAGE_ID)
+    -- Buat instance Webhook BARU di setiap panggilan agar field embed tidak menumpuk melebihi batas 25 Discord!
+    local webhook = nil
+    pcall(function()
+        webhook = Webhook.new(cfg.URL)
+        webhook.username = "Lucifer Monitor (" .. tostring(bot.name) .. ")"
+    end)
+    if not webhook then return end
+
+    if savedMessageId and savedMessageId ~= "" then
+        webhook.message_id = savedMessageId
     end
 
     local isOnline = (bot.status == BotStatus.online)
@@ -179,36 +183,39 @@ local function updateWebhook(currentAction, activeFarm)
     local fossilCount = getFossilRockCount()
     local storageWorldName = type(CONFIG.STORAGE) == "table" and (CONFIG.STORAGE.world or "-") or tostring(CONFIG.STORAGE or "-")
 
-    webhookClient.content = ""
-    webhookClient.embed1.use = true
-    webhookClient.embed1.color = statusColor
-    webhookClient.embed1.title = titleStr
-    webhookClient.embed1.description = ""
+    webhook.content = ""
+    webhook.embed1.use = true
+    webhook.embed1.color = statusColor
+    webhook.embed1.title = titleStr
+    webhook.embed1.description = ""
 
     pcall(function()
-        if webhookClient.embed1.footer then
-            webhookClient.embed1.footer.text = updatedFooter
+        if webhook.embed1.footer then
+            webhook.embed1.footer.text = updatedFooter
         end
     end)
 
-    -- 14 Fields persis sesuai susunan template Bos Anas
-    webhookClient.embed1:addField("Bot Name", tostring(bot.name or "namebot"), true)
-    webhookClient.embed1:addField("Bot Status", statusStr, true)
-    webhookClient.embed1:addField("Bot Ping", pingStr, true)
-    webhookClient.embed1:addField("Bot Level", botLevelStr, true)
-    webhookClient.embed1:addField("Gems (Gain)", string.format("%s (+%s)", formatNumber(curGems), formatNumber(math.max(0, gemGain))), true)
-    webhookClient.embed1:addField("Current World", currentWorld, true)
-    webhookClient.embed1:addField("Worlds Done", string.format("%d worlds", sessionStats.worldsDone), true)
-    webhookClient.embed1:addField("Gems Spent", formatNumber(sessionStats.gemsSpent), true)
-    webhookClient.embed1:addField("Trees on World", string.format("%d ready\n%d unready", readyTrees, unreadyTrees), true)
-    webhookClient.embed1:addField("Fossil Rock", string.format("%d Fossil Rock", fossilCount), true)
-    webhookClient.embed1:addField("Packs Bought", tostring(sessionStats.packsBought), true)
-    webhookClient.embed1:addField("Seeds Saved", formatNumber(sessionStats.seedsSaved), true)
-    webhookClient.embed1:addField("Storage", storageWorldName, true)
-    webhookClient.embed1:addField("Active Malady", getMaladyString(), true)
+    -- 14 Fields persis sesuai susunan template Bos Anas (selalu tepat 14 fields)
+    webhook.embed1:addField("Bot Name", tostring(bot.name or "namebot"), true)
+    webhook.embed1:addField("Bot Status", statusStr, true)
+    webhook.embed1:addField("Bot Ping", pingStr, true)
+    webhook.embed1:addField("Bot Level", botLevelStr, true)
+    webhook.embed1:addField("Gems (Gain)", string.format("%s (+%s)", formatNumber(curGems), formatNumber(math.max(0, gemGain))), true)
+    webhook.embed1:addField("Current World", currentWorld, true)
+    webhook.embed1:addField("Worlds Done", string.format("%d worlds", sessionStats.worldsDone), true)
+    webhook.embed1:addField("Gems Spent", formatNumber(sessionStats.gemsSpent), true)
+    webhook.embed1:addField("Trees on World", string.format("%d ready\n%d unready", readyTrees, unreadyTrees), true)
+    webhook.embed1:addField("Fossil Rock", string.format("%d Fossil Rock", fossilCount), true)
+    webhook.embed1:addField("Packs Bought", tostring(sessionStats.packsBought), true)
+    webhook.embed1:addField("Seeds Saved", formatNumber(sessionStats.seedsSaved), true)
+    webhook.embed1:addField("Storage", storageWorldName, true)
+    webhook.embed1:addField("Active Malady", getMaladyString(), true)
 
-    if webhookClient.message_id and webhookClient.message_id ~= "" then
-        pcall(function() webhookClient:edit() end)
+    if webhook.message_id and webhook.message_id ~= "" then
+        local ok, err = pcall(function() webhook:edit() end)
+        if not ok then
+            print("[Webhook] Peringatan edit webhook gagal: " .. tostring(err))
+        end
     else
         -- Jika MESSAGE_ID kosong di config, buat pesan pertama dengan ?wait=true & auto-capture ID agar bisa di-edit terus
         local captured = false
@@ -218,7 +225,7 @@ local function updateWebhook(currentAction, activeFarm)
                 if not postUrl:find("wait=true") then
                     postUrl = postUrl .. (postUrl:find("%?") and "&wait=true" or "?wait=true")
                 end
-                local payload = webhookClient:makeContent()
+                local payload = webhook:makeContent()
                 local client = HttpClient.new()
                 client:setUrl(postUrl)
                 client:setMethod(Method.post)
@@ -228,16 +235,17 @@ local function updateWebhook(currentAction, activeFarm)
                 if res.error == 0 and res.body then
                     local mid = res.body:match('"id"%s*:%s*"([%d]+)"')
                     if mid then
-                        webhookClient.message_id = mid
+                        savedMessageId = mid
+                        webhook.message_id = mid
                         captured = true
-                        print("[Webhook] Pesan dashboard pertama dibuat & dilock (Message ID: " .. mid .. "). Update selanjutnya akan meng-edit pesan ini!")
+                        print("[Webhook] Dashboard dibuat di Discord (Message ID: " .. mid .. "). Update selanjutnya akan selalu meng-edit pesan ini!")
                     end
                 end
             end)
         end
 
         if not captured then
-            pcall(function() webhookClient:send() end)
+            pcall(function() webhook:send() end)
         end
     end
 end
