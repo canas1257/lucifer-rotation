@@ -933,8 +933,19 @@ local function triggerMaladyInfection()
         return true
     end
 
-    print("[AutoMalady] [Shield Mode] AUTO_CURE_MALADY = false: Memulai proses infeksi (Chicken Feet / Grumbleteeth) agar kebal dari Torn Muscle...")
-    updateWebhook("Memicu Malady Shield", "-")
+    -- Sesuai arahan Bos Anas: Arahkan bot ke world SON100BREAK16 terlebih dahulu sebelum menyalakan mode shield
+    local shieldWorld = CONFIG.SHIELD_WORLD or "SON100BREAK16"
+    print(string.format("[AutoMalady] [Shield Mode] Menuju world '%s' untuk mengaktifkan Malady Shield...", tostring(shieldWorld)))
+    updateWebhook("Menuju World Shield", tostring(shieldWorld))
+
+    if not warp(shieldWorld) then
+        print(string.format("[AutoMalady] Gagal warp ke world shield '%s'.", tostring(shieldWorld)))
+        return false
+    end
+    sleep(1200)
+
+    print(string.format("[AutoMalady] Memulai proses infeksi (Chicken Feet / Grumbleteeth) di world %s...", tostring(shieldWorld)))
+    updateWebhook("Memicu Malady Shield", tostring(shieldWorld))
 
     -- Aktifkan spam chat
     setupChatSpam(true)

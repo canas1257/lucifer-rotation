@@ -49,9 +49,10 @@ local CONFIG = {
     -- Malady Handling (Cure vs Shield)
     -- ====================================================
     -- true  = Bot otomatis berobat ke 4AID (SURG AREA) jika terkena malady.
-    -- false = Mode Shield: Bot memicu Chicken Feet / Grumbleteeth (via packet & spam) agar kebal dari Torn Muscle, lalu lanjut rotasi!
+    -- false = Mode Shield: Bot warp ke SHIELD_WORLD lalu memicu Chicken Feet / Grumbleteeth agar kebal Torn Muscle!
     AUTO_CURE_MALADY = false,
     MALADY_WORLD = "4AID",
+    SHIELD_WORLD = "SON100BREAK16",
 
     -- Batas & Ambang Toleransi
     BATCH_LIMIT = 20,      -- Maksimal pohon dipanen sebelum pulang ke home
