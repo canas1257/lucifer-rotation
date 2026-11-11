@@ -1113,6 +1113,11 @@ local function doHarvest(dest)
     local maxBlocks = CONFIG.MAX_BLOCK_BACKPACK or 190
     local harvested = 0
     local readyTrees, growingCount = getZigzagReadyTrees()
+    if #readyTrees == 0 and growingCount == 0 then
+        print("[Farm] Menunggu data tile pohon selesai diunduh dari server...")
+        sleep(1500)
+        readyTrees, growingCount = getZigzagReadyTrees()
+    end
     print(string.format("[Farm] Status World: %d pohon siap panen | %d pohon masih dalam pertumbuhan", #readyTrees, growingCount))
 
     for _, coord in ipairs(readyTrees) do

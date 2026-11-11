@@ -106,10 +106,12 @@ local CONFIG = {
 -- ========================================================
 local RAW_ENGINE_URL = "https://raw.githubusercontent.com/canas1257/lucifer-rotation/main/engine.lua"
 
-print("[Loader] Mengunduh engine rotasi dari GitHub...")
+local cacheBuster = os.time and tostring(os.time()) or tostring(math.random(100000, 999999))
+local fetchUrl = RAW_ENGINE_URL .. "?v=" .. cacheBuster
+print("[Loader] Mengunduh engine rotasi terbaru dari GitHub (v=" .. cacheBuster .. ")...")
 
 local client = HttpClient.new()
-client.url = RAW_ENGINE_URL
+client.url = fetchUrl
 client:setMethod(Method.get)
 client.timeout = 15
 client.headers = { ["User-Agent"] = "Lucifer" }
