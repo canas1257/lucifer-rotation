@@ -132,8 +132,12 @@ local function updateWebhook(currentAction, activeFarm)
     if (now - lastWebhookSent) < 2 then return end
     lastWebhookSent = now
 
-    if not savedMessageId and cfg.MESSAGE_ID and cfg.MESSAGE_ID ~= "" then
-        savedMessageId = tostring(cfg.MESSAGE_ID)
+    local activeMessageId = _G.SAVED_WEBHOOK_MESSAGE_ID
+    if not activeMessageId or activeMessageId == "" then
+        if cfg.MESSAGE_ID and cfg.MESSAGE_ID ~= "" then
+            activeMessageId = tostring(cfg.MESSAGE_ID)
+            _G.SAVED_WEBHOOK_MESSAGE_ID = activeMessageId
+        end
     end
 
     -- Buat instance Webhook BARU di setiap panggilan agar field embed tidak menumpuk melebihi batas 25 Discord!
@@ -144,8 +148,8 @@ local function updateWebhook(currentAction, activeFarm)
     end)
     if not webhook then return end
 
-    if savedMessageId and savedMessageId ~= "" then
-        webhook.message_id = savedMessageId
+    if activeMessageId and activeMessageId ~= "" then
+        webhook.message_id = activeMessageId
     end
 
     local isOnline = (bot.status == BotStatus.online)
@@ -227,15 +231,16 @@ local function updateWebhook(currentAction, activeFarm)
                 end
                 local payload = webhook:makeContent()
                 local client = HttpClient.new()
-                client:setUrl(postUrl)
+                client.url = postUrl
                 client:setMethod(Method.post)
-                client.headers = { ["Content-Type"] = "application/json" }
+                client.timeout = 10
+                client.headers = { ["Content-Type"] = "application/json", ["User-Agent"] = "Lucifer" }
                 client.body = payload
                 local res = client:request()
                 if res.error == 0 and res.body then
                     local mid = res.body:match('"id"%s*:%s*"([%d]+)"')
                     if mid then
-                        savedMessageId = mid
+                        _G.SAVED_WEBHOOK_MESSAGE_ID = mid
                         webhook.message_id = mid
                         captured = true
                         print("[Webhook] Dashboard dibuat di Discord (Message ID: " .. mid .. "). Update selanjutnya akan selalu meng-edit pesan ini!")
