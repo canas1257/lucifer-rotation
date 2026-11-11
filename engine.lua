@@ -849,6 +849,124 @@ local function checkAndCureMalady()
 end
 
 -- ========================================================
+-- AUTO-MALADY SHIELD (CHICKEN FEET & GRUMBLETEETH TRIGGER)
+-- Digunakan jika AUTO_CURE_MALADY = false:
+-- Bot sengaja memicu Chicken Feet (via falling packet) &
+-- Grumbleteeth (via auto-spam chat) agar kebal dari Torn Muscle!
+-- ========================================================
+local function hasAnyMalady()
+    if not bot then return false end
+    local id = bot.malady or 0
+    local dur = 0
+    pcall(function() if bot.getMaladyDuration then dur = bot:getMaladyDuration() or 0 end end)
+    return (id > 0 and (dur == 0 or dur >= 60)) or (dur > 60)
+end
+
+local function sendChickenFeetPacket(pixelX, pixelY)
+    if not (GameUpdatePacket and GameUpdatePacket.new and bot.sendRaw) then return end
+    pcall(function()
+        local p = GameUpdatePacket.new()
+        p.type = 0          -- Movement state
+        p.flags = 32        -- 0x20 = JUMPING / FALLING state
+        p.vec_x = pixelX    -- Target pixel X
+        p.vec_y = pixelY    -- Target pixel Y
+        p.int_x = -1
+        p.int_y = -1
+        bot:sendRaw(p)
+    end)
+end
+
+local function findEmptyAirTile()
+    local world = bot:getWorld()
+    local bx, by = bot.x or 0, bot.y or 0
+    if not world then return bx * 32, by * 32 end
+    local radius = 20
+    local minDistance = 10
+
+    for y = math.max(0, by - radius), math.min(world.y - 1, by + radius) do
+        for x = math.max(0, bx - radius), math.min(world.x - 1, bx + radius) do
+            local dist = math.max(math.abs(x - bx), math.abs(y - by))
+            if dist >= minDistance then
+                local tile = world:getTile(x, y)
+                if tile and tile.fg == 0 then
+                    return x * 32, y * 32
+                end
+            end
+        end
+    end
+    return bx * 32, by * 32
+end
+
+local function setupChatSpam(enable)
+    if bot.auto_spam then
+        pcall(function()
+            if enable then
+                local spam = bot.auto_spam
+                spam.interval = 2.4
+                spam.randomizer = false
+                spam.auto_interval = false
+                if spam.messages and type(spam.messages.clear) == "function" then
+                    spam.messages:clear()
+                    spam.messages:add("f")
+                    spam.messages:add("f")
+                    spam.messages:add("/status")
+                end
+                spam.enabled = true
+            else
+                bot.auto_spam.enabled = false
+            end
+        end)
+    end
+end
+
+local function triggerMaladyInfection()
+    if hasAnyMalady() then
+        print(string.format("[AutoMalady] Bot sudah memiliki Malady (ID %s). Kebal dari Torn Muscle, lanjut rotasi!", tostring(bot.malady or "Active")))
+        return true
+    end
+
+    print("[AutoMalady] [Shield Mode] AUTO_CURE_MALADY = false: Memulai proses infeksi (Chicken Feet / Grumbleteeth) agar kebal dari Torn Muscle...")
+    updateWebhook("Memicu Malady Shield", "-")
+
+    -- Aktifkan spam chat
+    setupChatSpam(true)
+
+    local pixelX, pixelY = findEmptyAirTile()
+    local endTime = (os.time and os.time() or 0) + 180 -- Maksimal 3 menit
+    local packetCount = 0
+
+    while waitOnline() and not hasAnyMalady() and (os.time and os.time() or 0) < endTime do
+        sendChickenFeetPacket(pixelX, pixelY)
+        packetCount = packetCount + 1
+        sleep(500)
+    end
+
+    -- Matikan spam chat
+    setupChatSpam(false)
+
+    if hasAnyMalady() then
+        print(string.format("[AutoMalady] SUKSES! Bot terinfeksi Malady (ID %s) | Packet: %d. Kebal dari pengurangan damage! Lanjut rotasi...", 
+            tostring(bot.malady or "Active"), packetCount))
+        return true
+    else
+        print("[AutoMalady] Batas waktu tercapai / belum terkena. Melanjutkan rotasi...")
+        return false
+    end
+end
+
+local function handleMaladyRoutine()
+    if isAutoCureMaladyEnabled() then
+        if hasAnyMalady() then
+            checkAndCureMalady()
+        end
+    else
+        if not hasAnyMalady() then
+            triggerMaladyInfection()
+        end
+    end
+end
+
+-- ========================================================
 -- HELPER NAVIGASI ZIGZAG (SNAKE PATTERN)
 -- Mengurutkan pohon & lahan tanam agar bot berjalan zigzag:
 -- Baris 1: Kiri -> Kanan (x naik)
@@ -1539,8 +1657,8 @@ while waitOnline() do
     -- 1. Pengecekan & Pengambilan Pickaxe otomatis saat start / awal putaran
     checkAndEquipPickaxe()
 
-    -- 2. Pengecekan & Pengobatan Malady Otomatis (World 4AID)
-    checkAndCureMalady()
+    -- 2. Penanganan Malady Otomatis (Cure ke 4AID jika true / Infeksi Shield jika false)
+    handleMaladyRoutine()
 
     if not CONFIG.FARMS or #CONFIG.FARMS == 0 then
         print("[Engine] Peringatan: Daftar CONFIG.FARMS kosong!")
@@ -1549,7 +1667,7 @@ while waitOnline() do
 
     for _, currentFarm in ipairs(CONFIG.FARMS) do
         local farmName = type(currentFarm) == "table" and currentFarm.world or currentFarm
-        checkAndCureMalady()
+        handleMaladyRoutine()
         print("[Engine] Memulai farm: " .. farmName)
         local currentState = (bot:getInventory():findItem(CONFIG.SEED_ID) > 0) and STATE.PLANT or STATE.HARVEST
 

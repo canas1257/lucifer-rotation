@@ -46,10 +46,10 @@ local CONFIG = {
     SEED_ID = 4585,        -- Contoh: Pepper Tree Seed
 
     -- ====================================================
-    -- Auto-Cure Malady (SURG AREA di World 4AID)
+    -- Malady Handling (Cure vs Shield)
     -- ====================================================
-    -- true  = Jika terkena malady, bot otomatis ke 4AID (SURG AREA) untuk berobat lalu lanjut rotasi.
-    -- false = Matikan fitur ini (bot tidak akan mengecek malady agar tidak mengganggu rotasi).
+    -- true  = Bot otomatis berobat ke 4AID (SURG AREA) jika terkena malady.
+    -- false = Mode Shield: Bot memicu Chicken Feet / Grumbleteeth (via packet & spam) agar kebal dari Torn Muscle, lalu lanjut rotasi!
     AUTO_CURE_MALADY = false,
     MALADY_WORLD = "4AID",
 
