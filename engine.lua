@@ -934,20 +934,12 @@ local function setupChatSpam(enable)
     end
 end
 
-local function needsMaladyShield()
-    if isAutoCureMaladyEnabled() then return false end
-    if not bot then return false end
-    local id = bot.malady or 0
-    -- Jika bot sudah sembuh / tidak punya malady sama sekali
-    if id == 0 then return true end
-    -- Cek sisa durasi malady: jika mau habis (<= 30 menit / 1800 detik)
+local function getMaladyRemainingSeconds()
     local dur = 0
     pcall(function()
         if bot.getMaladyDuration then dur = bot:getMaladyDuration() or 0 end
     end)
-    if dur > 0 and dur <= 1800 then return true end
-    if dur == 0 and id == 0 then return true end
-    return false
+    return dur
 end
 
 local function triggerMaladyInfection()
@@ -976,7 +968,7 @@ local function triggerMaladyInfection()
     local endTime = (os.time and os.time() or 0) + 240 -- Maksimal 4 menit
     local packetCount = 0
 
-    while waitOnline() and needsMaladyShield() and (os.time and os.time() or 0) < endTime do
+    while waitOnline() and not hasAnyMalady() and (os.time and os.time() or 0) < endTime do
         sendChickenFeetPacket(pixelX, pixelY)
         packetCount = packetCount + 1
         sleep(500)
@@ -985,9 +977,9 @@ local function triggerMaladyInfection()
     -- Matikan spam chat
     setupChatSpam(false)
 
-    if not needsMaladyShield() then
-        print(string.format("[AutoMalady] SUKSES! Bot sudah terinfeksi Malady (%s | ID %s). Melanjutkan pekerjaan yang tertunda...", 
-            getMaladyString(), tostring(bot.malady or "Active")))
+    if hasAnyMalady() then
+        print(string.format("[AutoMalady] SUKSES! Bot sudah terinfeksi Malady (%s | ID %s) | Packet: %d. Melanjutkan pekerjaan yang tertunda...", 
+            getMaladyString(), tostring(bot.malady or "Active"), packetCount))
         updateWebhook("Malady Shield Aktif", tostring(shieldWorld))
         return true
     else
@@ -1002,17 +994,42 @@ local function handleMaladyRoutine()
             checkAndCureMalady()
         end
     else
-        -- Sesuai arahan Bos Anas: Jika malady bot sudah habis atau mau habis (<= 30 menit),
-        -- bot otomatis masuk ke Mode SHIELD di SHIELD_WORLD sampai dapat malady baru!
-        if needsMaladyShield() then
-            local dur = 0
-            pcall(function() if bot.getMaladyDuration then dur = bot:getMaladyDuration() or 0 end end)
-            local durMin = math.floor(dur / 60)
-            if bot.malady and bot.malady ~= 0 and durMin > 0 then
-                print(string.format("[AutoMalady] Malady saat ini (%s) mau habis (sisa ~%d min)! Menuju SHIELD_WORLD...", getMaladyString(), durMin))
-            else
-                print("[AutoMalady] Bot tidak memiliki malady / sudah sembuh! Menuju SHIELD_WORLD untuk Mode Shield...")
+        -- Sesuai arahan Bos Anas:
+        -- 1. Jika bot masih terkena malady yang sisa durasinya <= 30 menit (1800 detik):
+        --    Bot HANYA STANDBY diam di world SHIELD_WORLD sampai sembuh total (tanpa packet / tanpa chat)!
+        local shieldWorld = CONFIG.SHIELD_WORLD
+        if not shieldWorld or shieldWorld == "" then return end
+
+        local remSec = getMaladyRemainingSeconds()
+        local isSick = (bot.malady and bot.malady ~= 0) or (remSec > 0)
+
+        if isSick and remSec <= 1800 then
+            local durMin = math.floor(remSec / 60)
+            print(string.format("[AutoMalady] Malady bot (%s) tersisa ~%d min (<= 30 min). Menuju %s untuk STANDBY sampai sembuh...",
+                getMaladyString(), durMin, tostring(shieldWorld)))
+            updateWebhook(string.format("Standby Menunggu Malady Sembuh (~%d min)", durMin), tostring(shieldWorld))
+
+            if warp(shieldWorld) then
+                sleep(1000)
+                while waitOnline() do
+                    remSec = getMaladyRemainingSeconds()
+                    isSick = (bot.malady and bot.malady ~= 0) or (remSec > 0)
+                    if not isSick or remSec == 0 then
+                        break
+                    end
+                    durMin = math.floor(remSec / 60)
+                    print(string.format("[AutoMalady] Standby di %s... Menunggu malady sembuh total (sisa ~%d min)...", tostring(shieldWorld), durMin))
+                    updateWebhook(string.format("Standby Malady (~%d min)", durMin), tostring(shieldWorld))
+                    sleep(15000) -- Cek berkala setiap 15 detik (diam tanpa packet/spam)
+                end
+                print("[AutoMalady] Malady telah SEMBUH TOTAL! Memulai Mode Shield untuk mendapatkan malady baru...")
             end
+        end
+
+        -- 2. Jika bot sudah benar-benar sembuh / tidak punya malady, bot baru masuk ke Mode SHIELD
+        remSec = getMaladyRemainingSeconds()
+        isSick = (bot.malady and bot.malady ~= 0) or (remSec > 0)
+        if not isSick then
             triggerMaladyInfection()
         end
     end
@@ -1209,12 +1226,16 @@ local function doHarvest(dest)
             harvested = harvested + 1
             if harvested % 30 == 0 then
                 print(string.format("[Farm] Memanen... %d pohon dipanen (Blok di tas: %d)", harvested, inv:findItem(CONFIG.BLOCK_ID)))
-                if not isAutoCureMaladyEnabled() and needsMaladyShield() then
-                    print("[Farm] Malady bot habis / mau habis saat panen! Menuju SHIELD_WORLD...")
-                    handleMaladyRoutine()
-                    print("[Farm] Malady aktif kembali! Melanjutkan harvest yang tertunda...")
-                    warp(dest)
-                    sleep(1000)
+                if not isAutoCureMaladyEnabled() then
+                    local rem = getMaladyRemainingSeconds()
+                    local sick = (bot.malady and bot.malady ~= 0) or (rem > 0)
+                    if not sick or rem <= 1800 then
+                        print("[Farm] Malady bot habis / mau habis saat panen! Menuju SHIELD_WORLD...")
+                        handleMaladyRoutine()
+                        print("[Farm] Malady aktif kembali! Melanjutkan harvest yang tertunda...")
+                        warp(dest)
+                        sleep(1000)
+                    end
                 end
             end
         end
@@ -1376,16 +1397,20 @@ local function doBreakHome(dest)
             bot:findPath(standX, standY)
             sleep(400)
             Collect(true, 2)
-        elseif not isAutoCureMaladyEnabled() and needsMaladyShield() then
-            Collect(false)
-            print("[Home] Malady bot habis / mau habis saat break! Menuju SHIELD_WORLD untuk Mode Shield...")
-            handleMaladyRoutine()
-            print("[Home] Malady aktif kembali! Kembali ke Home untuk melanjutkan break yang tertunda...")
-            warp(activeHome)
-            standX, standY = findBreakSpot()
-            bot:findPath(standX, standY)
-            sleep(400)
-            Collect(true, 2)
+        elseif not isAutoCureMaladyEnabled() then
+            local rem = getMaladyRemainingSeconds()
+            local sick = (bot.malady and bot.malady ~= 0) or (rem > 0)
+            if not sick or rem <= 1800 then
+                Collect(false)
+                print("[Home] Malady bot habis / mau habis saat break! Menuju SHIELD_WORLD...")
+                handleMaladyRoutine()
+                print("[Home] Malady aktif kembali! Kembali ke Home untuk melanjutkan break yang tertunda...")
+                warp(activeHome)
+                standX, standY = findBreakSpot()
+                bot:findPath(standX, standY)
+                sleep(400)
+                Collect(true, 2)
+            end
         end
 
         -- Proteksi reconnect & recovery pintu langsung ke posisi kerja
