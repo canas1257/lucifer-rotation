@@ -216,38 +216,45 @@ local function updateWebhook(currentAction, activeFarm)
     webhook.embed1:addField("Active Malady", getMaladyString(), true)
 
     if webhook.message_id and webhook.message_id ~= "" then
-        local ok, err = pcall(function() webhook:edit() end)
+        local ok, err = pcall(function()
+            webhook:edit()
+            if type(webhook.edit) == "function" then
+                pcall(function() webhook:edit(webhook.message_id) end)
+            end
+        end)
         if not ok then
             print("[Webhook] Peringatan edit webhook gagal: " .. tostring(err))
         end
     else
         -- Jika MESSAGE_ID kosong di config, buat pesan pertama dengan ?wait=true & auto-capture ID agar bisa di-edit terus
         local captured = false
-        if HttpClient and Method and Method.post then
-            pcall(function()
-                local postUrl = cfg.URL
-                if not postUrl:find("wait=true") then
-                    postUrl = postUrl .. (postUrl:find("%?") and "&wait=true" or "?wait=true")
+        pcall(function()
+            local postUrl = cfg.URL
+            if not postUrl:find("wait=true") then
+                postUrl = postUrl .. (postUrl:find("%?") and "&wait=true" or "?wait=true")
+            end
+            local payload = webhook:makeContent()
+            local client = HttpClient.new()
+            client.url = postUrl
+            client:setMethod(Method.post)
+            client.timeout = 10
+            client.headers = { ["Content-Type"] = "application/json", ["User-Agent"] = "Lucifer" }
+            client.body = payload
+            local res = client:request()
+            if res.error == 0 and res.body then
+                local mid = res.body:match('"id"%s*:%s*"([%d]+)"')
+                if mid then
+                    _G.SAVED_WEBHOOK_MESSAGE_ID = mid
+                    webhook.message_id = mid
+                    captured = true
+                    print("[Webhook] Dashboard pertama berhasil dibuat (Message ID: " .. mid .. "). Update selanjutnya 100% selalu EDIT pesan ini!")
+                else
+                    print("[Webhook] Response body Discord (gagal match ID): " .. tostring(res.body):sub(1, 100))
                 end
-                local payload = webhook:makeContent()
-                local client = HttpClient.new()
-                client.url = postUrl
-                client:setMethod(Method.post)
-                client.timeout = 10
-                client.headers = { ["Content-Type"] = "application/json", ["User-Agent"] = "Lucifer" }
-                client.body = payload
-                local res = client:request()
-                if res.error == 0 and res.body then
-                    local mid = res.body:match('"id"%s*:%s*"([%d]+)"')
-                    if mid then
-                        _G.SAVED_WEBHOOK_MESSAGE_ID = mid
-                        webhook.message_id = mid
-                        captured = true
-                        print("[Webhook] Dashboard dibuat di Discord (Message ID: " .. mid .. "). Update selanjutnya akan selalu meng-edit pesan ini!")
-                    end
-                end
-            end)
-        end
+            else
+                print(string.format("[Webhook] Gagal POST create message: HTTP %s | Error: %s", tostring(res.status), tostring(res:getError())))
+            end
+        end)
 
         if not captured then
             pcall(function() webhook:send() end)
