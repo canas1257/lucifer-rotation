@@ -1674,7 +1674,13 @@ else
 end
 
 local round = 0
-while waitOnline() do
+while true do
+    -- Pastikan bot online sebelum memulai putaran (tahan tanpa timeout agar rotasi tidak mati sendiri saat DC)
+    while bot.status ~= BotStatus.online do
+        print("[Engine] Bot offline / disconnect. Menunggu status online kembali untuk melanjutkan rotasi...")
+        sleep(2000)
+    end
+
     round = round + 1
     if isLoop and round > 1 then
         print(string.format("\n[Engine] ========================================"))
