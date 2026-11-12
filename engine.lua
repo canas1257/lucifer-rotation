@@ -132,11 +132,11 @@ local function updateWebhook(currentAction, activeFarm)
     if (now - lastWebhookSent) < 2 then return end
     lastWebhookSent = now
 
-    local activeMessageId = _G.SAVED_WEBHOOK_MESSAGE_ID
+    local activeMessageId = _G["SAVED_WEBHOOK_MID_" .. tostring(bot.name)] or _G.SAVED_WEBHOOK_MESSAGE_ID
     if not activeMessageId or activeMessageId == "" then
         if cfg.MESSAGE_ID and cfg.MESSAGE_ID ~= "" then
             activeMessageId = tostring(cfg.MESSAGE_ID)
-            _G.SAVED_WEBHOOK_MESSAGE_ID = activeMessageId
+            _G["SAVED_WEBHOOK_MID_" .. tostring(bot.name)] = activeMessageId
         end
     end
 
@@ -233,23 +233,21 @@ local function updateWebhook(currentAction, activeFarm)
             local payload = webhook:makeContent()
             local client = HttpClient.new()
             client.url = postUrl
+            client.content = payload
+            client.body = payload
             client:setMethod(Method.post)
             client.timeout = 10
             client.headers = { ["Content-Type"] = "application/json", ["User-Agent"] = "Lucifer" }
-            client.body = payload
             local res = client:request()
             if res.error == 0 and res.body then
                 local mid = res.body:match('"id"%s*:%s*"([%d]+)"')
                 if mid then
+                    _G["SAVED_WEBHOOK_MID_" .. tostring(bot.name)] = mid
                     _G.SAVED_WEBHOOK_MESSAGE_ID = mid
                     webhook.message_id = mid
                     captured = true
-                    print("[Webhook] Dashboard pertama berhasil dibuat (Message ID: " .. mid .. "). Update selanjutnya 100% selalu EDIT pesan ini!")
-                else
-                    print("[Webhook] Response body Discord (gagal match ID): " .. tostring(res.body):sub(1, 100))
+                    print(string.format("[%s] [Webhook] Dashboard pertama berhasil dibuat (Message ID: %s). Update selanjutnya 100%% selalu EDIT pesan ini!", tostring(bot.name), mid))
                 end
-            else
-                print(string.format("[Webhook] Gagal POST create message: HTTP %s | Error: %s", tostring(res.status), tostring(res:getError())))
             end
         end)
 
