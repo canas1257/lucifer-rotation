@@ -218,9 +218,6 @@ local function updateWebhook(currentAction, activeFarm)
     if webhook.message_id and webhook.message_id ~= "" then
         local ok, err = pcall(function()
             webhook:edit()
-            if type(webhook.edit) == "function" then
-                pcall(function() webhook:edit(webhook.message_id) end)
-            end
         end)
         if not ok then
             print("[Webhook] Peringatan edit webhook gagal: " .. tostring(err))
