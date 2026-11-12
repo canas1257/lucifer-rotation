@@ -949,7 +949,12 @@ local function needsMaladyShield()
 end
 
 local function triggerMaladyInfection()
-    local shieldWorld = CONFIG.SHIELD_WORLD or "SON100BREAK16"
+    local shieldWorld = CONFIG.SHIELD_WORLD
+    if not shieldWorld or shieldWorld == "" then
+        print("[AutoMalady] Peringatan: CONFIG.SHIELD_WORLD belum diatur di loader.lua!")
+        return false
+    end
+
     print(string.format("[AutoMalady] [Shield Mode] Menuju world '%s' untuk mengaktifkan Malady Shield...", tostring(shieldWorld)))
     updateWebhook("Menuju World Shield", tostring(shieldWorld))
 
@@ -996,7 +1001,7 @@ local function handleMaladyRoutine()
         end
     else
         -- Sesuai arahan Bos Anas: Jika malady bot sudah habis atau mau habis (<= 30 menit),
-        -- bot otomatis masuk ke Mode SHIELD di SON100BREAK16 sampai dapat malady baru!
+        -- bot otomatis masuk ke Mode SHIELD di SHIELD_WORLD sampai dapat malady baru!
         if needsMaladyShield() then
             local dur = 0
             pcall(function() if bot.getMaladyDuration then dur = bot:getMaladyDuration() or 0 end end)

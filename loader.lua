@@ -52,7 +52,7 @@ local CONFIG = {
     -- false = Mode Shield: Bot warp ke SHIELD_WORLD lalu memicu Chicken Feet / Grumbleteeth agar kebal Torn Muscle!
     AUTO_CURE_MALADY = false,
     MALADY_WORLD = "4AID",
-    SHIELD_WORLD = "SON100BREAK16",
+    SHIELD_WORLD = "", -- Masukkan nama world shield rahasia Anda di sini
 
     -- Batas & Ambang Toleransi
     BATCH_LIMIT = 20,      -- Maksimal pohon dipanen sebelum pulang ke home
