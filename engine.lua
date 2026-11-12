@@ -932,9 +932,27 @@ local function setupChatSpam(enable)
     end
 end
 
+local function isTornMuscle()
+    if not bot then return false end
+    local id = bot.malady or 0
+    if id == 1 then return true end
+    local mName = getMaladyString()
+    if mName and mName:find("Torn") then return true end
+    return false
+end
+
+local function hasHarmlessMalady()
+    if not bot then return false end
+    local id = bot.malady or 0
+    if id == 1 or isTornMuscle() then return false end
+    local dur = 0
+    pcall(function() if bot.getMaladyDuration then dur = bot:getMaladyDuration() or 0 end end)
+    return id > 0 and (dur == 0 or dur >= 60)
+end
+
 local function triggerMaladyInfection()
-    if hasAnyMalady() then
-        print(string.format("[AutoMalady] Bot sudah memiliki Malady (ID %s). Kebal dari Torn Muscle, lanjut rotasi!", tostring(bot.malady or "Active")))
+    if hasHarmlessMalady() then
+        print(string.format("[AutoMalady] Bot sudah memiliki Malady aman (ID %s). Kebal dari Torn Muscle, lanjut rotasi!", tostring(bot.malady or "Active")))
         return true
     end
 
@@ -959,7 +977,7 @@ local function triggerMaladyInfection()
     local endTime = (os.time and os.time() or 0) + 180 -- Maksimal 3 menit
     local packetCount = 0
 
-    while waitOnline() and not hasAnyMalady() and (os.time and os.time() or 0) < endTime do
+    while waitOnline() and not hasHarmlessMalady() and not isTornMuscle() and (os.time and os.time() or 0) < endTime do
         sendChickenFeetPacket(pixelX, pixelY)
         packetCount = packetCount + 1
         sleep(500)
@@ -968,8 +986,8 @@ local function triggerMaladyInfection()
     -- Matikan spam chat
     setupChatSpam(false)
 
-    if hasAnyMalady() then
-        print(string.format("[AutoMalady] SUKSES! Bot terinfeksi Malady (ID %s) | Packet: %d. Kebal dari pengurangan damage! Lanjut rotasi...", 
+    if hasHarmlessMalady() then
+        print(string.format("[AutoMalady] SUKSES! Bot terinfeksi Malady aman (ID %s) | Packet: %d. Kebal dari pengurangan damage! Lanjut rotasi...", 
             tostring(bot.malady or "Active"), packetCount))
         return true
     else
@@ -984,7 +1002,35 @@ local function handleMaladyRoutine()
             checkAndCureMalady()
         end
     else
-        if not hasAnyMalady() then
+        -- Mode Shield (AUTO_CURE_MALADY = false):
+        -- Sesuai arahan Bos Anas: Jika terjangkit Torn Muscle (sisa 30 menit atau kurang),
+        -- bot standby di world SHIELD_WORLD (SON100BREAK16) sampai sembuh total!
+        if isTornMuscle() then
+            local shieldWorld = CONFIG.SHIELD_WORLD or "SON100BREAK16"
+            local dur = 0
+            pcall(function() if bot.getMaladyDuration then dur = bot:getMaladyDuration() or 0 end end)
+            local durMin = math.floor(dur / 60)
+
+            print(string.format("[AutoMalady] Proteksi Torn Muscle Aktif! Bot terjangkit Torn Muscle (~%d min). Menuju %s untuk standby...",
+                durMin, tostring(shieldWorld)))
+            updateWebhook("Standby Menunggu Torn Muscle Sembuh", tostring(shieldWorld))
+
+            if warp(shieldWorld) then
+                sleep(1000)
+                while waitOnline() and isTornMuscle() do
+                    dur = 0
+                    pcall(function() if bot.getMaladyDuration then dur = bot:getMaladyDuration() or 0 end end)
+                    durMin = math.floor(dur / 60)
+                    print(string.format("[AutoMalady] Standby di %s... Menunggu Torn Muscle sembuh (sisa ~%d min)...", tostring(shieldWorld), durMin))
+                    updateWebhook(string.format("Standby Torn Muscle (~%d min)", durMin), tostring(shieldWorld))
+                    sleep(15000) -- Cek berkala setiap 15 detik
+                end
+                print("[AutoMalady] Torn Muscle telah sembuh total! Memulai Mode Shield untuk mendapatkan malady aman...")
+            end
+        end
+
+        -- Begitu sembuh (atau jika belum punya malady aman), picu infeksi Chicken Feet / Grumbleteeth di SHIELD_WORLD
+        if not hasHarmlessMalady() then
             triggerMaladyInfection()
         end
     end
@@ -1085,11 +1131,8 @@ local function doHarvest(dest)
     local farmName = type(dest) == "table" and dest.world or dest
     updateWebhook("Memanen Pohon (Harvest)", farmName)
 
-    -- Cek & sembuhkan malady sebelum panen
-    if hasMalady() then
-        print("[Farm] Terdeteksi Malady sebelum panen! Menuju 4AID untuk pengobatan...")
-        checkAndCureMalady()
-    end
+    -- Cek & tangani malady sebelum panen
+    handleMaladyRoutine()
 
     if not warp(dest) then return STATE.HARVEST end
 
@@ -1272,11 +1315,8 @@ local function doBreakHome(dest)
     local blocks = bot:getInventory():findItem(CONFIG.BLOCK_ID)
     if blocks == 0 then return STATE.PLANT end
 
-    -- Sesuai arahan Bos Anas: Cek & sembuhkan malady sebelum mulai break di Home
-    if hasMalady() then
-        print("[Home] Terdeteksi Malady sebelum break! Menuju 4AID untuk pengobatan di SURG AREA...")
-        checkAndCureMalady()
-    end
+    -- Sesuai arahan Bos Anas: Cek & tangani malady sebelum mulai break di Home
+    handleMaladyRoutine()
 
     local activeHome = getHomeDest()
     local homeWorld = activeHome.world
@@ -1336,13 +1376,22 @@ local function doBreakHome(dest)
             break
         end
 
-        -- Sesuai arahan Bos Anas: Jika di tengah proses break bot terkena malady,
-        -- bot otomatis langsung menuju 4AID untuk pengobatan, lalu kembali ke Home lanjut break!
-        if hasMalady() then
+        -- Sesuai arahan Bos Anas: Jika di tengah proses break bot terkena malady / Torn Muscle:
+        if isAutoCureMaladyEnabled() and hasAnyMalady() then
             Collect(false)
             print("[Home] Terdeteksi Malady di tengah proses break! Menuju 4AID untuk pengobatan di SURG AREA...")
             checkAndCureMalady()
             print("[Home] Malady telah sembuh. Kembali ke Home untuk melanjutkan break...")
+            warp(activeHome)
+            standX, standY = findBreakSpot()
+            bot:findPath(standX, standY)
+            sleep(400)
+            Collect(true, 2)
+        elseif not isAutoCureMaladyEnabled() and isTornMuscle() then
+            Collect(false)
+            print("[Home] Terdeteksi Torn Muscle di tengah break! Menuju SHIELD_WORLD untuk standby...")
+            handleMaladyRoutine()
+            print("[Home] Torn Muscle sembuh & Shield aktif. Kembali ke Home untuk melanjutkan break...")
             warp(activeHome)
             standX, standY = findBreakSpot()
             bot:findPath(standX, standY)
