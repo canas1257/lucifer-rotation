@@ -1765,11 +1765,25 @@ while true do
 
     for _, currentFarm in ipairs(CONFIG.FARMS) do
         local farmName = type(currentFarm) == "table" and currentFarm.world or currentFarm
+
+        -- Pastikan bot ONLINE sebelum memproses farm ini (tahan terus jika DC agar tidak melewati/skip farm!)
+        while bot.status ~= BotStatus.online do
+            print(string.format("[Engine] Bot offline saat hendak memproses farm '%s'. Menunggu online kembali...", farmName))
+            updateWebhook("Bot Offline / Menunggu Reconnect", farmName)
+            sleep(2000)
+        end
+
         handleMaladyRoutine()
         print("[Engine] Memulai farm: " .. farmName)
         local currentState = (bot:getInventory():findItem(CONFIG.SEED_ID) > 0) and STATE.PLANT or STATE.HARVEST
 
-        while waitOnline() do
+        while true do
+            -- Tahan jika bot DC saat proses berjalan di dalam farm ini
+            while bot.status ~= BotStatus.online do
+                print(string.format("[Engine] Bot offline saat bekerja di '%s'. Menunggu online kembali...", farmName))
+                sleep(2000)
+            end
+
             if currentState == STATE.HARVEST then
                 currentState = doHarvest(currentFarm)
             elseif currentState == STATE.BREAK_HOME then
@@ -1793,10 +1807,11 @@ while true do
                         print(string.format("[Engine] Terverifikasi 100%% tidak ada pohon siap panen yang tersisa (%d pohon masih tumbuh). Pindah ke world berikutnya...", stillGrowing))
                         sessionStats.worldsDone = sessionStats.worldsDone + 1
                         updateWebhook("Menyelesaikan World: " .. farmName, farmName)
-                        break
+                        break -- HANYA KELUAR DI SINI SETELAH WORLD 100% TUNTAS!
                     end
                 else
-                    break
+                    print(string.format("[Engine] Gagal warp verifikasi '%s' (mungkin offline/lag). Mencoba lagi...", farmName))
+                    sleep(2000)
                 end
             end
         end
